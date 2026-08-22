@@ -1,0 +1,9 @@
+[
+  {"question": "年假有几天?", "keywords": ["5 天", "10 天", "15 天"]},
+  {"question": "加班费怎么算?", "keywords": ["1.5 倍", "2 倍", "3 倍"]},
+  {"question": "差旅住宿标准是多少?", "keywords": ["400 元", "300 元"]},
+  {"question": "离职要提前多久通知?", "keywords": ["30 天"]},
+  {"question": "智能音箱多少钱?", "keywords": ["499"]},
+  {"question": "音箱保修多久?", "keywords": ["保修 1 年", "3 年"]},
+  {"question": "忘记密码怎么办?", "keywords": ["忘记密码", "重置密码"]}
+]

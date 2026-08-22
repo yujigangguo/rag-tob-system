@@ -1,0 +1,50 @@
+:root {
+  --brand: #4f6ef7;
+  --brand-deep: #3b54d1;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  background: #f5f7fb;
+  color: #1f2329;
+}
+
+/* 卡片悬浮动效 */
+.hover-lift {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px rgba(79, 110, 247, 0.14);
+}
+
+/* 渐变主按钮 */
+.gradient-btn {
+  background: linear-gradient(135deg, #4f6ef7 0%, #7b5cf0 100%);
+  border: none;
+  color: #fff;
+}
+
+/* 页面淡入 */
+.fade-enter-active {
+  animation: fadeIn 0.35s ease;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

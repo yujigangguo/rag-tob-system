@@ -1,0 +1,15 @@
+.venv/
+.uv_cache/
+.uv_python/
+.npm-cache/
+__pycache__/
+*.pyc
+.env
+.git
+.gitignore
+frontend/
+tests/
+docs/
+data/uploads/
+data/chroma/
+data/milvus.db

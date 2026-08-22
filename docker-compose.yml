@@ -1,0 +1,134 @@
+# 一键启动:Milvus + MySQL + 后端 FastAPI + 前端(nginx 托管 + 反向代理)
+#
+# Milvus 相关服务已按本机已有容器(2.4.4)还原,数据卷沿用现有路径避免数据丢失:
+#   ${MILVUS_VOLUME_DIR} 默认指向 E:/milvus_redis/volumes(见 .env)
+#
+# 用法:
+#   docker compose up -d --build
+#   docker compose down
+#
+# 访问:
+#   前端:http://localhost:8080
+#   后端:http://localhost:8000/docs
+#   Milvus:localhost:19530
+services:
+  # ================= Milvus 向量库 =================
+  etcd:
+    container_name: milvus-etcd
+    restart: unless-stopped
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_ENABLE_V2=true
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+    volumes:
+      - ${MILVUS_VOLUME_DIR:-./volumes}/etcd:/etcd/data
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd/data
+
+  minio:
+    container_name: milvus-minio
+    restart: unless-stopped
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - ${MILVUS_VOLUME_DIR:-./volumes}/minio:/minio/data
+    command: minio server /minio/data
+
+  redis:
+    container_name: milvus-redis
+    restart: unless-stopped
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - ${MILVUS_VOLUME_DIR:-./volumes}/redis:/data
+    command: redis-server --requirepass 1234
+
+  milvus:
+    container_name: milvus-standalone
+    restart: unless-stopped
+    image: milvusdb/milvus:v2.4.4
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    ports:
+      - "19530:19530"   # gRPC(客户端连接用)
+      - "9091:9091"     # 监控/metrics
+    volumes:
+      - ${MILVUS_VOLUME_DIR:-./volumes}/milvus:/var/lib/milvus
+    depends_on:
+      - etcd
+      - minio
+
+  # ================= MySQL =================
+  mysql:
+    image: mysql:8.0
+    container_name: rag-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_DATABASE: rag_db
+      MYSQL_USER: rag_user
+      MYSQL_PASSWORD: rag_pass123
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "rag_user", "-prag_pass123"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ================= 后端 =================
+  backend:
+    build: .
+    container_name: rag-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      milvus:
+        condition: service_started
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: rag_user
+      DB_PASSWORD: rag_pass123
+      DB_NAME: rag_db
+      # Milvus 走 compose 服务名(不能用 .env 的 localhost,那是宿主机视角)
+      MILVUS_URI: http://milvus:19530
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      LLM_MODEL: ${LLM_MODEL:-qwen-max}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v3}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-please}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+
+  # ================= 前端 =================
+  frontend:
+    build: ./frontend
+    container_name: rag-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  mysql_data:
