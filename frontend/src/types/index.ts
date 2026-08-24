@@ -7,6 +7,7 @@ export interface KnowledgeBase {
   retrieval_type: string
   chunk_size: number
   chunk_overlap: number
+  parent_chunk_size: number
   doc_count: number
   created_at: string
 }
@@ -28,6 +29,7 @@ export interface ChunkItem {
   document_id: number
   content: string
   chunk_index: number
+  parent_id: number | null
   created_at: string
 }
 

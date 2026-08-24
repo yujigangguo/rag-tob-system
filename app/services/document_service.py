@@ -128,41 +128,78 @@ def parse_and_index(db: Session, document_id: int, chunk_size: int | None = None
             _set_progress(document_id, 100)
             return doc
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size or kb.chunk_size,
-            chunk_overlap=chunk_overlap or kb.chunk_overlap,
-            separators=["\n\n", "\n", "。", "!", "?", ";", " ", ""],
+        # 父子分块:父块(大粒度,存上下文) -> 子块(小粒度,做检索向量化)
+        child_size = chunk_size or kb.chunk_size
+        parent_size = kb.parent_chunk_size or 2000
+        if parent_size < child_size:
+            parent_size = child_size * 4
+
+        overlap = chunk_overlap or kb.chunk_overlap
+        separators = ["\n\n", "\n", "。", "!", "?", ";", " ", ""]
+
+        parent_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=parent_size, chunk_overlap=overlap, separators=separators,
         )
-        texts = splitter.split_text(text)
-        _set_progress(document_id, 50)
-        if not texts:
+        parents = parent_splitter.split_text(text)
+        if not parents:
             raise ValueError("切分后无内容")
 
-        embeddings = get_embeddings()
-        metadatas = [
-            {"kb_id": doc.kb_id, "document_id": document_id, "chunk_index": i}
-            for i in range(len(texts))
-        ]
-        _set_progress(document_id, 60)
-        milvus_ids = add_chunks(doc.kb_id, embeddings, texts, metadatas)
-        _set_progress(document_id, 90)
+        child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=child_size, chunk_overlap=overlap, separators=separators,
+        )
 
-        for i, (t, mid) in enumerate(zip(texts, milvus_ids)):
-            db.add(Chunk(
+        embeddings = get_embeddings()
+        total_children = 0
+        _set_progress(document_id, 40)
+
+        for parent_idx, parent_text in enumerate(parents):
+            # 1) 写父块记录(不写入 Milvus)
+            parent = Chunk(
                 kb_id=doc.kb_id,
                 document_id=document_id,
-                content=t,
-                chunk_index=i,
-                milvus_id=str(mid),
-            ))
+                content=parent_text,
+                chunk_index=parent_idx,
+                parent_id=None,
+                milvus_id=None,
+            )
+            db.add(parent)
+            db.flush()  # 拿到父块自增 id
 
-        doc.chunk_count = len(texts)
+            # 2) 父块内切子块
+            children = child_splitter.split_text(parent_text) or [parent_text]
+
+            # 3) 子块写入 Milvus(metadata 带 parent_id,检索后映射父块)
+            child_metadatas = [
+                {"kb_id": doc.kb_id, "document_id": document_id,
+                 "parent_id": parent.id, "chunk_index": ci}
+                for ci in range(len(children))
+            ]
+            milvus_ids = add_chunks(doc.kb_id, embeddings, children, child_metadatas)
+
+            # 4) 子块落库
+            for ci, (ct, mid) in enumerate(zip(children, milvus_ids)):
+                db.add(Chunk(
+                    kb_id=doc.kb_id,
+                    document_id=document_id,
+                    content=ct,
+                    chunk_index=ci,
+                    parent_id=parent.id,
+                    milvus_id=str(mid),
+                ))
+                total_children += 1
+
+            _set_progress(document_id, 40 + int(50 * (parent_idx + 1) / len(parents)))
+
+        doc.chunk_count = total_children  # 记录子块数(检索单元)
         doc.status = "completed"
         doc.error_msg = None
         db.commit()
         db.refresh(doc)
         _set_progress(document_id, 100)
-        logger.info("文档解析完成: 文档=%s 块数=%s", doc.filename, len(texts))
+        logger.info(
+            "文档解析完成: 文档=%s 父块=%s 子块=%s",
+            doc.filename, len(parents), total_children,
+        )
         return doc
     except Exception as e:
         doc.status = "failed"
@@ -180,45 +217,80 @@ def list_documents(db: Session, user_id: int, kb_id: int) -> list[Document]:
 
 
 def list_chunks(db: Session, user_id: int, document_id: int) -> list[Chunk]:
+    """文档块列表(父子分块:仅返回父块,父块是语义单位)。"""
     doc = db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     get_kb(db, user_id, doc.kb_id)
-    stmt = select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.chunk_index)
+    stmt = (
+        select(Chunk)
+        .where(Chunk.document_id == document_id, Chunk.parent_id.is_(None))
+        .order_by(Chunk.chunk_index)
+    )
     return list(db.scalars(stmt).all())
 
 
 def update_chunk(db: Session, user_id: int, chunk_id: int, content: str) -> Chunk:
-    """更新文档块:改文本 -> 重新向量化。"""
-    chunk = db.get(Chunk, chunk_id)
-    if chunk is None:
+    """编辑父块:更新文本 -> 删除旧子块 -> 重新切分并向量化。"""
+    parent = db.get(Chunk, chunk_id)
+    if parent is None:
         raise HTTPException(status_code=404, detail="文档块不存在")
-    get_kb(db, user_id, chunk.kb_id)
+    get_kb(db, user_id, parent.kb_id)
+    kb = db.get(KnowledgeBase, parent.kb_id)
 
-    embeddings = get_embeddings()
-    # 删除旧向量
-    if chunk.milvus_id:
-        delete_chunks(chunk.kb_id, [chunk.milvus_id])
-    # 写入新向量
-    new_ids = add_chunks(
-        chunk.kb_id, embeddings, [content],
-        [{"kb_id": chunk.kb_id, "document_id": chunk.document_id, "chunk_index": chunk.chunk_index}],
+    # 1. 删除旧子块(向量 + 记录)
+    children = list(db.scalars(select(Chunk).where(Chunk.parent_id == parent.id)).all())
+    old_ids = [c.milvus_id for c in children if c.milvus_id]
+    if old_ids:
+        delete_chunks(parent.kb_id, old_ids)
+    db.execute(delete(Chunk).where(Chunk.parent_id == parent.id))
+
+    # 2. 更新父块文本
+    parent.content = content
+    db.flush()
+
+    # 3. 重新切分子块并向量化
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=kb.chunk_size, chunk_overlap=kb.chunk_overlap,
+        separators=["\n\n", "\n", "。", "!", "?", ";", " ", ""],
     )
-    chunk.content = content
-    chunk.milvus_id = str(new_ids[0])
+    children_texts = splitter.split_text(content) or [content]
+    embeddings = get_embeddings()
+    metas = [
+        {"kb_id": parent.kb_id, "document_id": parent.document_id,
+         "parent_id": parent.id, "chunk_index": i}
+        for i in range(len(children_texts))
+    ]
+    milvus_ids = add_chunks(parent.kb_id, embeddings, children_texts, metas)
+    for i, (ct, mid) in enumerate(zip(children_texts, milvus_ids)):
+        db.add(Chunk(
+            kb_id=parent.kb_id, document_id=parent.document_id,
+            content=ct, chunk_index=i, parent_id=parent.id, milvus_id=str(mid),
+        ))
+
     db.commit()
-    db.refresh(chunk)
-    return chunk
+    db.refresh(parent)
+    logger.info("编辑文档块: 父块=%s 重切子块=%s", parent.id, len(children_texts))
+    return parent
 
 
 def delete_chunk(db: Session, user_id: int, chunk_id: int) -> None:
-    """删除文档块(向量 + 记录)。"""
+    """删除文档块(父块连同其子块与向量一并删除)。"""
     chunk = db.get(Chunk, chunk_id)
     if chunk is None:
         raise HTTPException(status_code=404, detail="文档块不存在")
     get_kb(db, user_id, chunk.kb_id)
+
+    # 删除子块向量
+    children = list(db.scalars(select(Chunk).where(Chunk.parent_id == chunk.id)).all())
+    milvus_ids = [c.milvus_id for c in children if c.milvus_id]
+    if milvus_ids:
+        delete_chunks(chunk.kb_id, milvus_ids)
+    # 若当前块本身是子块(有父块),也删自身向量
     if chunk.milvus_id:
         delete_chunks(chunk.kb_id, [chunk.milvus_id])
+
+    db.execute(delete(Chunk).where(Chunk.parent_id == chunk.id))
     db.execute(delete(Chunk).where(Chunk.id == chunk_id))
     db.commit()
 

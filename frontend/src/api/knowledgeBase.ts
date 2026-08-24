@@ -11,6 +11,7 @@ export function createKnowledgeBase(data: {
   retrieval_type: string
   chunk_size: number
   chunk_overlap: number
+  parent_chunk_size?: number
 }): Promise<KnowledgeBase> {
   return http.post('/knowledge-bases', data).then((r) => r.data)
 }

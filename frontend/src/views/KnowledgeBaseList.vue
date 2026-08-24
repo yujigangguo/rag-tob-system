@@ -55,6 +55,10 @@
         <el-form-item label="重叠大小">
           <el-input-number v-model="form.chunk_overlap" :min="0" :max="1000" :step="10" />
         </el-form-item>
+        <el-form-item label="父块大小">
+          <el-input-number v-model="form.parent_chunk_size" :min="100" :max="8000" :step="100" />
+        </el-form-item>
+        <div class="form-tip">父子分块:子块(切块大小)用于检索,父块(父块大小)命中后作为完整上下文返回给大模型</div>
       </el-form>
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
@@ -83,6 +87,7 @@ const form = reactive({
   retrieval_type: 'hybrid',
   chunk_size: 500,
   chunk_overlap: 50,
+  parent_chunk_size: 2000,
 })
 
 onMounted(load)
@@ -97,6 +102,7 @@ function openCreate() {
   form.retrieval_type = 'hybrid'
   form.chunk_size = 500
   form.chunk_overlap = 50
+  form.parent_chunk_size = 2000
   dialog.value = true
 }
 
@@ -195,5 +201,11 @@ function remove(kb: KnowledgeBase) {
   text-align: right;
   border-top: 1px solid #f0f2f6;
   padding-top: 10px;
+}
+.form-tip {
+  font-size: 12px;
+  color: #9aa3b2;
+  line-height: 1.5;
+  margin: -4px 0 12px 90px;
 }
 </style>

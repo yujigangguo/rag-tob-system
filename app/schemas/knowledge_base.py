@@ -10,8 +10,9 @@ class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128, description="知识库名称")
     description: str | None = Field(None, max_length=500, description="描述")
     retrieval_type: str = Field("hybrid", pattern="^(dense|hybrid)$", description="检索方式:dense/hybrid")
-    chunk_size: int = Field(500, ge=50, le=4000, description="文本切块大小")
+    chunk_size: int = Field(500, ge=50, le=4000, description="子块大小(检索粒度)")
     chunk_overlap: int = Field(50, ge=0, le=1000, description="重叠大小")
+    parent_chunk_size: int = Field(2000, ge=100, le=8000, description="父块大小(上下文粒度)")
 
 
 class KnowledgeBaseUpdate(BaseModel):
@@ -20,6 +21,7 @@ class KnowledgeBaseUpdate(BaseModel):
     retrieval_type: str | None = Field(None, pattern="^(dense|hybrid)$")
     chunk_size: int | None = Field(None, ge=50, le=4000)
     chunk_overlap: int | None = Field(None, ge=0, le=1000)
+    parent_chunk_size: int | None = Field(None, ge=100, le=8000)
 
 
 class KnowledgeBaseOut(BaseModel):
@@ -29,6 +31,7 @@ class KnowledgeBaseOut(BaseModel):
     retrieval_type: str
     chunk_size: int
     chunk_overlap: int
+    parent_chunk_size: int
     doc_count: int
     created_at: datetime
 

@@ -25,6 +25,7 @@ class ChunkOut(BaseModel):
     document_id: int
     content: str
     chunk_index: int
+    parent_id: int | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

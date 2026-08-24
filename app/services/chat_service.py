@@ -85,6 +85,35 @@ def _build_context(docs: List[Document]) -> str:
     return "\n\n".join(parts)
 
 
+def _map_to_parents(db: Session, docs: List[Document]) -> List[Document]:
+    """父子分块:把检索命中的子块映射回父块(去重,保持相关度顺序)。
+
+    向量库中存储的是子块(metadata 含 parent_id);命中子块后返回其父块,
+    使 LLM 获得更完整、连贯的上下文。
+    """
+    parent_ids: List[int] = []
+    seen: set[int] = set()
+    for d in docs:
+        pid = d.metadata.get("parent_id")
+        if pid is not None and pid not in seen:
+            seen.add(pid)
+            parent_ids.append(pid)
+    if not parent_ids:
+        return docs  # 无父块信息(旧数据),退回原结果
+
+    parents = list(db.scalars(select(Chunk).where(Chunk.id.in_(parent_ids))).all())
+    parent_map = {c.id: c for c in parents}
+    result: List[Document] = []
+    for pid in parent_ids:
+        c = parent_map.get(pid)
+        if c is not None:
+            result.append(Document(
+                page_content=c.content,
+                metadata={"document_id": c.document_id, "parent_id": pid},
+            ))
+    return result
+
+
 def prepare_answer(db: Session, user_id: int, req: ChatRequest) -> dict:
     """检索 + 保存用户消息 + 构造 messages(在请求线程内完成)。"""
     # 1. 会话(不存在则新建)
@@ -112,15 +141,21 @@ def prepare_answer(db: Session, user_id: int, req: ChatRequest) -> dict:
     kb_chunks: dict[int, List[str]] = {}
     kb_types: dict[int, str] = {}
     for kb in kbs:
-        chunks = list(db.scalars(select(Chunk.content).where(Chunk.kb_id == kb.id)).all())
+        # 混合检索的 BM25 用子块文本(检索粒度)
+        chunks = list(db.scalars(
+            select(Chunk.content).where(Chunk.kb_id == kb.id, Chunk.parent_id.isnot(None))
+        ).all())
         kb_chunks[kb.id] = chunks
         kb_types[kb.id] = kb.retrieval_type
 
     docs = retrieve_multi_kb(
         [kb.id for kb in kbs], get_embeddings(), req.question, kb_chunks, kb_types
     )
-    logger.info("问答检索: session=%s 知识库=%s 召回=%s 条", session_id, [kb.id for kb in kbs], len(docs))
-    context = _build_context(docs[: settings.final_top_k])
+    logger.info("问答检索: session=%s 知识库=%s 命中子块=%s", session_id, [kb.id for kb in kbs], len(docs))
+
+    # 父子分块:命中的子块映射回父块(去重),以父块作为 LLM 上下文
+    context_docs = _map_to_parents(db, docs)
+    context = _build_context(context_docs[: settings.final_top_k])
 
     # 4. 保存用户消息
     db.add(ChatMessage(session_id=session_id, role="user", content=req.question))
