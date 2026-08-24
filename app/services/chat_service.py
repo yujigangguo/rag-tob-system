@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.logging_config import get_logger
-from app.models import ChatMessage, ChatSession, Chunk, KnowledgeBase, User
+from app.models import ChatMessage, ChatSession, Chunk, Document as DocumentModel, KnowledgeBase, User
 from app.rbac import visible_department_ids
 from app.rag.embeddings import get_embeddings
 from app.rag.llm import get_llm
@@ -143,9 +143,16 @@ def prepare_answer(db: Session, user: User, req: ChatRequest) -> dict:
     kb_chunks: dict[int, List[dict]] = {}
     kb_types: dict[int, str] = {}
     for kb in kbs:
-        # 混合检索的 BM25 用子块文本(检索粒度),并携带元数据以支持父子映射与引用链接
+        # 混合检索的 BM25 用当前版本的子块文本(检索粒度),并携带元数据以支持父子映射与引用链接
         chunks = list(db.scalars(
-            select(Chunk).where(Chunk.kb_id == kb.id, Chunk.parent_id.isnot(None))
+            select(Chunk)
+            .join(KnowledgeBase, KnowledgeBase.id == Chunk.kb_id)
+            .join(DocumentModel, DocumentModel.id == Chunk.document_id)
+            .where(
+                Chunk.kb_id == kb.id,
+                Chunk.parent_id.isnot(None),
+                Chunk.version == DocumentModel.version,  # 只取当前版本,避免旧版本块污染 BM25
+            )
         ).all())
         kb_chunks[kb.id] = [
             {

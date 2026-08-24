@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user, require_admin
 from app.models import Document, User
-from app.schemas.document import ChunkOut, ChunkUpdate, DocumentOut
+from app.schemas.document import (
+    ChunkOut,
+    ChunkUpdate,
+    DocumentOut,
+    DocumentVersionOut,
+)
 from app.services import document_service
 
 # 文档接口(挂在知识库下)
@@ -27,8 +32,9 @@ def upload(
     db: Session = Depends(get_db),
 ):
     doc = document_service.upload_document(db, user, kb_id, file)
-    # 后台异步解析,接口立即返回;进度通过 /progress 接口查询
-    document_service.start_parse_async(doc.id, chunk_size, chunk_overlap)
+    # 仅新上传/内容变化(状态 pending)才触发解析;同名同内容去重命中(completed)直接复用
+    if doc.status == "pending":
+        document_service.start_parse_async(doc.id, chunk_size, chunk_overlap)
     return doc
 
 
@@ -61,6 +67,27 @@ def delete_document(document_id: int, user: User = Depends(require_admin),
 def list_chunks(document_id: int, user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
     return document_service.list_chunks(db, user, document_id)
+
+
+@documents_router.get("/{document_id}/versions", response_model=list[DocumentVersionOut],
+                      summary="文档版本列表")
+def list_versions(document_id: int, user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    return document_service.list_document_versions(db, user, document_id)
+
+
+@documents_router.get("/{document_id}/versions/{version}/chunks", response_model=list[ChunkOut],
+                      summary="指定版本的文档块列表(版本对比)")
+def get_version_chunks(document_id: int, version: int, user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    return document_service.get_version_chunks(db, user, document_id, version)
+
+
+@documents_router.post("/{document_id}/rollback", response_model=DocumentOut,
+                       summary="回滚到上一版本(仅管理员)")
+def rollback(document_id: int, user: User = Depends(require_admin),
+             db: Session = Depends(get_db)):
+    return document_service.rollback_document(db, user, document_id)
 
 
 @chunks_router.put("/{chunk_id}", response_model=ChunkOut, summary="编辑文档块(仅管理员)")

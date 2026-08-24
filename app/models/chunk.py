@@ -21,4 +21,8 @@ class Chunk(Base):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("chunks.id"), nullable=True, index=True)
     # 对应 Milvus 中的主键 id,用于更新/删除向量(仅子块有,父块不写入向量库)
     milvus_id: Mapped[str] = mapped_column(String(64), nullable=True)
+    # 子块文本 SHA-256(增量更新时按内容哈希复用未变化的向量)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 所属文档版本(版本管理:旧版本 chunk 保留,支持查看/回滚)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

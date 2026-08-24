@@ -1,5 +1,5 @@
 import http from './index'
-import type { ChunkItem, Department, DocumentItem, KnowledgeBase } from '@/types'
+import type { ChunkItem, Department, DocumentItem, DocumentVersion, KnowledgeBase } from '@/types'
 
 export function listDepartments(): Promise<Department[]> {
   return http.get('/departments').then((r) => r.data)
@@ -64,6 +64,18 @@ export function getDocumentProgress(kbId: number, documentId: number): Promise<P
 
 export function listChunks(kbId: number, documentId: number): Promise<ChunkItem[]> {
   return http.get(`/knowledge-bases/${kbId}/documents/${documentId}/chunks`).then((r) => r.data)
+}
+
+export function listDocumentVersions(kbId: number, documentId: number): Promise<DocumentVersion[]> {
+  return http.get(`/knowledge-bases/${kbId}/documents/${documentId}/versions`).then((r) => r.data)
+}
+
+export function getVersionChunks(kbId: number, documentId: number, version: number): Promise<ChunkItem[]> {
+  return http.get(`/knowledge-bases/${kbId}/documents/${documentId}/versions/${version}/chunks`).then((r) => r.data)
+}
+
+export function rollbackDocument(kbId: number, documentId: number): Promise<DocumentItem> {
+  return http.post(`/knowledge-bases/${kbId}/documents/${documentId}/rollback`).then((r) => r.data)
 }
 
 export function updateChunk(chunkId: number, content: string): Promise<ChunkItem> {

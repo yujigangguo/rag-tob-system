@@ -5,6 +5,11 @@ import uuid
 
 from pathlib import Path
 
+from sqlalchemy import select
+
+from app.database import SessionLocal
+from app.models import Chunk, Document
+
 
 def _create_kb(client, headers, department_id: int) -> int:
     r = client.post("/api/knowledge-bases", json={
@@ -151,6 +156,166 @@ def test_upload_parse_and_chunks(client, auth_headers, department_id, wait_doc_p
     assert r.status_code == 200
 
     # 清理知识库
+    client.delete(f"/api/knowledge-bases/{kb_id}", headers=auth_headers)
+
+
+def _upload_md(client, headers, kb_id: int, filename: str, data: bytes):
+    r = client.post(
+        f"/api/knowledge-bases/{kb_id}/documents",
+        files={"file": (filename, data, "text/markdown")},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _child_map(kb_id: int, document_id: int, version: int) -> dict[str, str]:
+    """文档某版本子块 {content -> milvus_id}。"""
+    db = SessionLocal()
+    try:
+        chunks = list(db.scalars(
+            select(Chunk).where(
+                Chunk.kb_id == kb_id,
+                Chunk.document_id == document_id,
+                Chunk.parent_id.isnot(None),
+                Chunk.version == version,
+            )
+        ).all())
+        return {c.content: c.milvus_id for c in chunks}
+    finally:
+        db.close()
+
+
+def test_reupload_identical_skips(
+    client, auth_headers, department_id, wait_doc_parsed
+):
+    """同名同内容重传:零消耗复用,不新增文档、doc_count 不变。"""
+    kb_id = _create_kb(client, auth_headers, department_id)
+    md = Path("data/raw/员工手册.md")
+    data = md.read_bytes()
+
+    doc = _upload_md(client, auth_headers, kb_id, "员工手册.md", data)
+    wait_doc_parsed(auth_headers, kb_id, doc["id"])
+
+    doc2 = _upload_md(client, auth_headers, kb_id, "员工手册.md", data)
+    assert doc2["id"] == doc["id"]  # 复用同一文档记录
+    assert doc2["status"] == "completed"  # 直接完成,无需重新解析
+
+    db = SessionLocal()
+    try:
+        count = len(list(db.scalars(select(Document).where(Document.kb_id == kb_id)).all()))
+    finally:
+        db.close()
+    assert count == 1  # 没有产生重复文档
+
+    r = client.get("/api/knowledge-bases", headers=auth_headers)
+    kb = next(k for k in r.json() if k["id"] == kb_id)
+    assert kb["doc_count"] == 1  # doc_count 不变
+
+
+def test_reupload_changed_reuses_unchanged_vectors(
+    client, auth_headers, department_id, wait_doc_parsed
+):
+    """同名不同内容重传:覆盖更新同一文档;未变化的子块复用旧向量,变化部分新嵌入。"""
+    kb_id = _create_kb(client, auth_headers, department_id)
+    md = Path("data/raw/员工手册.md")
+    data = md.read_bytes()
+
+    doc = _upload_md(client, auth_headers, kb_id, "员工手册.md", data)
+    wait_doc_parsed(auth_headers, kb_id, doc["id"])
+    old_map = _child_map(kb_id, doc["id"], doc["version"])
+    assert old_map, "首版应产生子块"
+
+    # 改版:末尾追加一段,其余内容不变
+    new_data = data + "\n\n## 新增条款\n\n- 本版本测试新增:年终奖按 2 个月工资发放。".encode("utf-8")
+    _upload_md(client, auth_headers, kb_id, "员工手册.md", new_data)
+    wait_doc_parsed(auth_headers, kb_id, doc["id"])
+
+    # 解析完成后重新取文档,确认版本 +1(版本号在异步解析中更新)
+    r = client.get(f"/api/knowledge-bases/{kb_id}/documents", headers=auth_headers)
+    doc2 = next(d for d in r.json() if d["id"] == doc["id"])
+    assert doc2["version"] == doc["version"] + 1, "内容变化应生成新版本"
+
+    new_map = _child_map(kb_id, doc["id"], doc2["version"])
+    assert new_map, "改版后应产生子块"
+
+    # 未变化的子块:milvus_id 完全复用(不重新嵌入)
+    reused = [t for t in old_map if t in new_map]
+    assert reused, "应有未变化的子块被复用"
+    for t in reused:
+        assert old_map[t] == new_map[t], f"未变化子块应复用旧向量: {t[:20]}"
+
+    db = SessionLocal()
+    try:
+        doc_row = db.get(Document, doc["id"])
+        assert doc_row.content_hash is not None  # 记录文件哈希
+        count = len(list(db.scalars(select(Document).where(Document.kb_id == kb_id)).all()))
+    finally:
+        db.close()
+    assert count == 1
+
+    # 清理
+    client.delete(f"/api/knowledge-bases/{kb_id}", headers=auth_headers)
+
+
+def test_document_versions_and_rollback(
+    client, auth_headers, department_id, wait_doc_parsed
+):
+    """版本管理:重传生成新版本、旧版本可查看、可回滚。"""
+    kb_id = _create_kb(client, auth_headers, department_id)
+    md = Path("data/raw/员工手册.md")
+    data = md.read_bytes()
+
+    doc = _upload_md(client, auth_headers, kb_id, "员工手册.md", data)
+    wait_doc_parsed(auth_headers, kb_id, doc["id"])
+    assert doc["version"] == 1
+    r = client.get(f"/api/knowledge-bases/{kb_id}/documents/{doc['id']}/chunks", headers=auth_headers)
+    v1_parent_count = len(r.json())
+    assert v1_parent_count >= 1
+
+    # 改版 -> v2(解析完成后版本才更新)
+    new_data = data + "\n\n## 测试新增\n\n- 版本回滚验证内容。".encode("utf-8")
+    _upload_md(client, auth_headers, kb_id, "员工手册.md", new_data)
+    wait_doc_parsed(auth_headers, kb_id, doc["id"])
+    r = client.get(f"/api/knowledge-bases/{kb_id}/documents", headers=auth_headers)
+    doc2 = next(d for d in r.json() if d["id"] == doc["id"])
+    assert doc2["version"] == 2
+
+    # 当前块列表只返回 v2 父块
+    r = client.get(f"/api/knowledge-bases/{kb_id}/documents/{doc2['id']}/chunks", headers=auth_headers)
+    assert r.status_code == 200
+    assert len(r.json()) >= 1
+
+    # 版本列表:v2 当前
+    r = client.get(f"/api/knowledge-bases/{kb_id}/documents/{doc2['id']}/versions", headers=auth_headers)
+    assert r.status_code == 200
+    ver_list = r.json()
+    assert [v["version"] for v in ver_list] == [2, 1]
+    assert ver_list[0]["is_current"] is True
+
+    # 查看旧版本块
+    r = client.get(f"/api/knowledge-bases/{kb_id}/documents/{doc2['id']}/versions/1/chunks",
+                   headers=auth_headers)
+    assert r.status_code == 200
+    assert len(r.json()) == v1_parent_count
+
+    # 回滚 -> v1
+    r = client.post(f"/api/knowledge-bases/{kb_id}/documents/{doc2['id']}/rollback",
+                    headers=auth_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["version"] == 1
+
+    # 回滚后当前块列表 = v1 块
+    r = client.get(f"/api/knowledge-bases/{kb_id}/documents/{doc2['id']}/chunks", headers=auth_headers)
+    assert r.status_code == 200
+    assert len(r.json()) == v1_parent_count
+
+    # 已是最旧版本,再回滚应报错
+    r = client.post(f"/api/knowledge-bases/{kb_id}/documents/{doc2['id']}/rollback",
+                    headers=auth_headers)
+    assert r.status_code == 400
+
+    # 清理
     client.delete(f"/api/knowledge-bases/{kb_id}", headers=auth_headers)
 
 

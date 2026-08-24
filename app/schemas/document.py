@@ -14,9 +14,16 @@ class DocumentOut(BaseModel):
     status: str
     error_msg: str | None
     chunk_count: int
+    version: int = 1   # 当前版本号(重传内容变化 +1)
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class DocumentVersionOut(BaseModel):
+    version: int
+    parent_count: int = 0
+    is_current: bool = False
 
 
 class ChunkOut(BaseModel):

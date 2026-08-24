@@ -29,6 +29,7 @@
           <div class="doc-meta">
             <el-tag size="small" :type="statusType(doc.status)">{{ statusText(doc.status) }}</el-tag>
             <span>块 {{ doc.chunk_count }}</span>
+            <el-button text size="small" type="info" @click.stop="openVersions(doc)">v{{ doc.version }}</el-button>
           </div>
           <el-icon v-if="isAdmin" class="doc-del" @click.stop="removeDoc(doc)"><Delete /></el-icon>
         </div>
@@ -36,7 +37,13 @@
 
       <!-- 文档块预览 -->
       <div class="chunk-list">
-        <div class="panel-title">文档块预览</div>
+        <div class="panel-title">
+          文档块预览
+          <template v-if="viewingVersion !== null">
+            <el-tag size="small" type="warning" style="margin-left: 8px">正在查看 v{{ viewingVersion }}</el-tag>
+            <el-button text size="small" type="primary" @click="backToCurrentVersion">返回当前版本</el-button>
+          </template>
+        </div>
         <el-empty v-if="!currentDoc" description="点击左侧文档查看其内容块" />
         <template v-else>
           <div v-for="chunk in chunks" :key="chunk.id" :id="'chunk-' + chunk.id" class="chunk-item"
@@ -103,6 +110,31 @@
         <el-button type="primary" class="gradient-btn" :loading="saving" @click="saveChunk">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 版本管理弹窗 -->
+    <el-dialog v-model="versionDialog" :title="`版本管理 - ${currentDoc?.filename || ''}`" width="560px">
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px"
+        title="同名文件重传且内容变化时自动生成新版本;查看旧版本内容或回滚到上一版本。" />
+      <el-table :data="versions" size="small">
+        <el-table-column prop="version" label="版本" width="80" />
+        <el-table-column prop="parent_count" label="父块数" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="row.is_current" size="small" type="success">当前</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作">
+          <template #default="{ row }">
+            <el-button text size="small" type="primary" @click="viewVersion(row)">查看</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="versionDialog = false">关闭</el-button>
+        <el-button v-if="isAdmin && currentDoc && currentDoc.version > 1" type="danger" :loading="rollingBack"
+          @click="rollbackOnce">回滚到上一版本</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -116,13 +148,16 @@ import {
   deleteChunk,
   deleteDocument,
   getDocumentProgress,
+  getVersionChunks,
   listChunks,
+  listDocumentVersions,
   listDocuments,
   listKnowledgeBases,
+  rollbackDocument,
   updateChunk,
   uploadDocument,
 } from '@/api/knowledgeBase'
-import type { ChunkItem, DocumentItem, KnowledgeBase } from '@/types'
+import type { ChunkItem, DocumentItem, DocumentVersion, KnowledgeBase } from '@/types'
 
 const route = useRoute()
 const kbId = Number(route.params.id)
@@ -147,6 +182,12 @@ const saving = ref(false)
 const editingChunk = ref<ChunkItem | null>(null)
 const editContent = ref('')
 const highlightedChunkId = ref<number | null>(null)
+
+// 版本管理
+const versionDialog = ref(false)
+const versions = ref<DocumentVersion[]>([])
+const viewingVersion = ref<number | null>(null)
+const rollingBack = ref(false)
 
 onMounted(async () => {
   const kbs = await listKnowledgeBases()
@@ -239,7 +280,50 @@ async function pollProgress(documentId: number) {
 async function openDoc(doc: DocumentItem) {
   currentDocId.value = doc.id
   currentDoc.value = doc
+  viewingVersion.value = null
   chunks.value = await listChunks(kbId, doc.id)
+}
+
+async function openVersions(doc: DocumentItem) {
+  currentDocId.value = doc.id
+  currentDoc.value = doc
+  versions.value = await listDocumentVersions(kbId, doc.id)
+  versionDialog.value = true
+}
+
+async function viewVersion(row: DocumentVersion) {
+  if (!currentDoc.value) return
+  viewingVersion.value = row.version
+  chunks.value = await getVersionChunks(kbId, currentDoc.value.id, row.version)
+  versionDialog.value = false
+}
+
+async function backToCurrentVersion() {
+  if (!currentDoc.value) return
+  viewingVersion.value = null
+  chunks.value = await listChunks(kbId, currentDoc.value.id)
+}
+
+async function rollbackOnce() {
+  if (!currentDoc.value) return
+  await ElMessageBox.confirm(
+    `确定回滚文档「${currentDoc.value.filename}」到上一版本吗?当前版本的内容与向量将被删除。`,
+    '提示', { type: 'warning' },
+  )
+  rollingBack.value = true
+  try {
+    const doc = await rollbackDocument(kbId, currentDoc.value.id)
+    ElMessage.success(`已回滚到 v${doc.version}`)
+    versionDialog.value = false
+    await loadDocs()
+    currentDoc.value = docs.value.find((d) => d.id === doc.id) || null
+    if (currentDoc.value) {
+      viewingVersion.value = null
+      chunks.value = await listChunks(kbId, currentDoc.value.id)
+    }
+  } finally {
+    rollingBack.value = false
+  }
 }
 
 async function removeDoc(doc: DocumentItem) {

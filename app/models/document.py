@@ -20,5 +20,9 @@ class Document(Base):
     # 解析状态:pending / parsing / completed / failed
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     error_msg: Mapped[str] = mapped_column(Text, nullable=True)
+    # 文件内容 SHA-256(同名重传去重 / 增量更新判断)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 当前版本号(重传内容变化时 +1;旧版本 chunk 保留在 chunks 表支持回滚)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

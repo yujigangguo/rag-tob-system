@@ -74,6 +74,22 @@ def main() -> None:
             conn, "chat_messages", "kb_ids",
             "JSON NULL COMMENT '本次问答检索的知识库 id 列表'",
         )
+        _ensure_column(
+            conn, "documents", "content_hash",
+            "VARCHAR(64) NULL COMMENT '文件内容 SHA-256(同名重传去重)'",
+        )
+        _ensure_column(
+            conn, "chunks", "content_hash",
+            "VARCHAR(64) NULL COMMENT '子块文本 SHA-256(增量更新复用向量)'",
+        )
+        _ensure_column(
+            conn, "documents", "version",
+            "INT NOT NULL DEFAULT 1 COMMENT '当前版本号(版本管理/回滚)'",
+        )
+        _ensure_column(
+            conn, "chunks", "version",
+            "INT NOT NULL DEFAULT 1 COMMENT '所属文档版本'",
+        )
 
         # 3. 预置部门
         print("--- 预置部门 ---")

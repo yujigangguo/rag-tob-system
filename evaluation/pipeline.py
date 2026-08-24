@@ -108,8 +108,12 @@ def retrieve_contexts(db: Session, kb_id: int, question: str, top_n: int | None 
     kb = db.get(KnowledgeBase, kb_id)
     child_chunks = list(
         db.scalars(
-            select(Chunk).where(
-                Chunk.kb_id == kb_id, Chunk.parent_id.isnot(None)
+            select(Chunk)
+            .join(Document, Document.id == Chunk.document_id)
+            .where(
+                Chunk.kb_id == kb_id,
+                Chunk.parent_id.isnot(None),
+                Chunk.version == Document.version,  # 只取当前版本子块
             )
         ).all()
     )

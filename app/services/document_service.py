@@ -1,12 +1,13 @@
 """文档业务逻辑:上传、解析、向量化、文档块管理。"""
 from __future__ import annotations
 
+import hashlib
 import threading
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.logging_config import get_logger
@@ -69,8 +70,18 @@ def _ext(filename: str) -> str:
     return Path(filename).suffix.lower().lstrip(".")
 
 
+def _sha256(text: str) -> str:
+    """文本 SHA-256(子块内容哈希,增量更新复用向量用)。"""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def upload_document(db: Session, user: User, kb_id: int, file: UploadFile) -> Document:
-    """保存上传文件并创建文档记录(status=pending)。仅管理员可操作。"""
+    """保存上传文件并创建文档记录(status=pending)。仅管理员可操作。
+
+    增量更新:
+    - 同名文件且内容哈希一致(已完成)→ 直接复用,不重复解析;
+    - 同名文件内容变化 → 覆盖更新同一文档记录(解析时按块哈希复用未变化向量)。
+    """
     kb = get_kb_manageable(db, user, kb_id)
     ext = _ext(file.filename or "")
     if ext not in SUPPORTED_TYPES:
@@ -88,8 +99,9 @@ def upload_document(db: Session, user: User, kb_id: int, file: UploadFile) -> Do
     save_dir.mkdir(parents=True, exist_ok=True)
     file_path = save_dir / file.filename
 
-    # 流式写入并计数,防止无 Content-Length 时绕过预检
+    # 流式写入并计数,防止无 Content-Length 时绕过预检;同时计算文件 SHA-256
     size = 0
+    hasher = hashlib.sha256()
     try:
         with open(file_path, "wb") as out:
             while chunk := file.file.read(1024 * 1024):
@@ -100,9 +112,34 @@ def upload_document(db: Session, user: User, kb_id: int, file: UploadFile) -> Do
                         detail=f"文件过大:最大支持 {settings.max_upload_size_mb}MB",
                     )
                 out.write(chunk)
+                hasher.update(chunk)
     except HTTPException:
         file_path.unlink(missing_ok=True)  # 清理已写入的部分
         raise
+    file_hash = hasher.hexdigest()
+
+    # ---- 增量更新:同名文件处理 ----
+    existing = db.scalar(
+        select(Document).where(Document.kb_id == kb_id, Document.filename == file.filename)
+    )
+    if existing is not None:
+        if existing.content_hash == file_hash and existing.status == "completed":
+            logger.info("文档内容无变化,跳过解析: 文档=%s", existing.filename)
+            return existing  # 零消耗复用,doc_count 不变
+        # 同名但内容变化(或上次解析失败):覆盖更新同一文档记录
+        existing.file_path = str(file_path)
+        existing.file_type = ext
+        existing.content_hash = file_hash
+        existing.status = "pending"
+        existing.error_msg = None
+        _set_progress(existing.id, 0)  # 重置进度,避免前端读到上一次解析的遗留 completed
+        db.commit()
+        db.refresh(existing)
+        logger.info(
+            "覆盖更新文档: kb=%s 文件=%s 类型=%s 大小=%sKB",
+            kb_id, existing.filename, ext, size // 1024,
+        )
+        return existing
 
     doc = Document(
         kb_id=kb_id,
@@ -110,9 +147,11 @@ def upload_document(db: Session, user: User, kb_id: int, file: UploadFile) -> Do
         file_path=str(file_path),
         file_type=ext,
         status="pending",
+        content_hash=file_hash,
     )
     db.add(doc)
     kb.doc_count += 1  # 与 delete_document 的 doc_count -= 1 对应
+    _set_progress(doc.id, 0)
     db.commit()
     db.refresh(doc)
     logger.info("上传文档: kb=%s 文件=%s 类型=%s 大小=%sKB", kb_id, doc.filename, ext, size // 1024)
@@ -174,53 +213,107 @@ def parse_and_index(db: Session, document_id: int, chunk_size: int | None = None
         total_children = 0
         _set_progress(document_id, 40)
 
-        for parent_idx, parent_text in enumerate(parents):
-            # 1) 写父块记录(不写入 Milvus)
-            parent = Chunk(
-                kb_id=doc.kb_id,
-                document_id=document_id,
-                content=parent_text,
-                chunk_index=parent_idx,
-                parent_id=None,
-                milvus_id=None,
-            )
-            db.add(parent)
-            db.flush()  # 拿到父块自增 id
+        # ---- 增量更新:内存中保留旧子块(内容哈希 -> milvus_id),用于复用未变化的向量 ----
+        old_children = list(db.scalars(
+            select(Chunk).where(Chunk.document_id == document_id, Chunk.parent_id.isnot(None))
+        ).all())
+        old_hash_to_milvus: dict[str, str] = {}
+        for oc in old_children:
+            if oc.content_hash and oc.milvus_id:
+                old_hash_to_milvus.setdefault(oc.content_hash, oc.milvus_id)
+        reused_milvus_ids: set[str] = set()
+        new_chunk_ids: list[int] = []   # 本次新建的 chunk 行(失败时回滚)
+        new_milvus_ids: list[str] = []  # 本次新嵌入的向量(失败时回滚)
+        reused_count = 0
+        # 版本:首版为 1;覆盖更新时新块写入新版本,旧版本块保留(支持回滚)
+        new_version = doc.version + 1 if old_children else doc.version
 
-            # 2) 父块内切子块
-            children = child_splitter.split_text(parent_text) or [parent_text]
-
-            # 3) 子块写入 Milvus(metadata 带 parent_id,检索后映射父块)
-            child_metadatas = [
-                {"kb_id": doc.kb_id, "document_id": document_id,
-                 "parent_id": parent.id, "chunk_index": ci}
-                for ci in range(len(children))
-            ]
-            milvus_ids = add_chunks(doc.kb_id, embeddings, children, child_metadatas)
-
-            # 4) 子块落库
-            for ci, (ct, mid) in enumerate(zip(children, milvus_ids)):
-                db.add(Chunk(
+        try:
+            for parent_idx, parent_text in enumerate(parents):
+                # 1) 写父块记录(不写入 Milvus)
+                parent = Chunk(
                     kb_id=doc.kb_id,
                     document_id=document_id,
-                    content=ct,
-                    chunk_index=ci,
-                    parent_id=parent.id,
-                    milvus_id=str(mid),
-                ))
-                total_children += 1
+                    content=parent_text,
+                    chunk_index=parent_idx,
+                    parent_id=None,
+                    milvus_id=None,
+                    version=new_version,
+                )
+                db.add(parent)
+                db.flush()  # 拿到父块自增 id
 
-            _set_progress(document_id, 40 + int(50 * (parent_idx + 1) / len(parents)))
+                # 2) 父块内切子块
+                children = child_splitter.split_text(parent_text) or [parent_text]
 
-        doc.chunk_count = total_children  # 记录子块数(检索单元)
+                # 3) 逐子块判定:内容哈希命中旧块 -> 复用旧向量;否则待嵌入
+                to_embed: list[str] = []
+                to_embed_meta: list[dict] = []
+                milvus_for: list[str | None] = [None] * len(children)
+                for ci, ct in enumerate(children):
+                    h = _sha256(ct)
+                    mid = old_hash_to_milvus.pop(h, None) if h else None
+                    if mid:
+                        milvus_for[ci] = mid
+                        reused_milvus_ids.add(mid)
+                        reused_count += 1
+                    else:
+                        to_embed.append(ct)
+                        to_embed_meta.append({
+                            "kb_id": doc.kb_id, "document_id": document_id,
+                            "parent_id": parent.id, "chunk_index": ci,
+                        })
+
+                new_ids: list[str] = []
+                if to_embed:
+                    new_ids = add_chunks(doc.kb_id, embeddings, to_embed, to_embed_meta)
+                    new_milvus_ids.extend(new_ids)
+
+                # 4) 子块落库(reused 复用旧 milvus_id,未命中用新嵌入 id)
+                embed_iter = iter(new_ids)
+                added_chunks: list[Chunk] = []
+                for ci, ct in enumerate(children):
+                    mid = milvus_for[ci] or str(next(embed_iter))
+                    c = Chunk(
+                        kb_id=doc.kb_id,
+                        document_id=document_id,
+                        content=ct,
+                        chunk_index=ci,
+                        parent_id=parent.id,
+                        milvus_id=mid,
+                        content_hash=_sha256(ct),
+                        version=new_version,
+                    )
+                    db.add(c)
+                    added_chunks.append(c)
+                db.flush()  # 拿到本次子块 id(用于失败回滚)
+                new_chunk_ids.extend(c.id for c in added_chunks)
+                total_children += len(children)
+
+                _set_progress(document_id, 40 + int(50 * (parent_idx + 1) / len(parents)))
+        except Exception:
+            # 解析失败:回滚本次新建的行与向量,旧版本数据保持可用
+            if new_chunk_ids:
+                db.execute(delete(Chunk).where(Chunk.id.in_(new_chunk_ids)))
+            if new_milvus_ids:
+                try:
+                    delete_chunks(doc.kb_id, new_milvus_ids)
+                except Exception:
+                    pass
+            db.commit()
+            raise
+
+        # 旧版本 chunk 行与向量全部保留(版本管理与回滚);被复用向量跨版本共享,不重复删除
+        doc.version = new_version
+        doc.chunk_count = total_children  # 记录当前版本子块数(检索单元)
         doc.status = "completed"
         doc.error_msg = None
         db.commit()
         db.refresh(doc)
         _set_progress(document_id, 100)
         logger.info(
-            "文档解析完成: 文档=%s 父块=%s 子块=%s",
-            doc.filename, len(parents), total_children,
+            "文档解析完成: 文档=%s 版本=%s 父块=%s 子块=%s 复用向量=%s",
+            doc.filename, new_version, len(parents), total_children, reused_count,
         )
         return doc
     except Exception as e:
@@ -239,17 +332,120 @@ def list_documents(db: Session, user: User, kb_id: int) -> list[Document]:
 
 
 def list_chunks(db: Session, user: User, document_id: int) -> list[Chunk]:
-    """文档块列表(父子分块:仅返回父块,父块是语义单位)。"""
+    """文档块列表(父子分块:仅返回当前版本的父块,父块是语义单位)。"""
     doc = db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     get_kb(db, user, doc.kb_id)
     stmt = (
         select(Chunk)
-        .where(Chunk.document_id == document_id, Chunk.parent_id.is_(None))
+        .where(
+            Chunk.document_id == document_id,
+            Chunk.parent_id.is_(None),
+            Chunk.version == doc.version,
+        )
         .order_by(Chunk.chunk_index)
     )
     return list(db.scalars(stmt).all())
+
+
+def list_document_versions(db: Session, user: User, document_id: int) -> list[dict]:
+    """文档版本列表:[{version, chunk_count, created_at}],用于版本查看与回滚。"""
+    doc = db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    get_kb(db, user, doc.kb_id)
+    rows = db.execute(
+        select(Chunk.version, func.count(Chunk.id))
+        .where(Chunk.document_id == document_id, Chunk.parent_id.is_(None))
+        .group_by(Chunk.version)
+        .order_by(Chunk.version.desc())
+    ).all()
+    versions = [
+        {"version": v, "parent_count": cnt} for v, cnt in rows
+    ]
+    # 当前版本标记(可能还没有块,如解析失败)
+    for item in versions:
+        item["is_current"] = item["version"] == doc.version
+    if not any(v["version"] == doc.version for v in versions):
+        versions.insert(0, {"version": doc.version, "parent_count": 0, "is_current": True})
+    return versions
+
+
+def get_version_chunks(db: Session, user: User, document_id: int, version: int) -> list[Chunk]:
+    """指定版本的父块列表(版本对比 / 查看旧版内容)。"""
+    doc = db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    get_kb(db, user, doc.kb_id)
+    stmt = (
+        select(Chunk)
+        .where(
+            Chunk.document_id == document_id,
+            Chunk.parent_id.is_(None),
+            Chunk.version == version,
+        )
+        .order_by(Chunk.chunk_index)
+    )
+    return list(db.scalars(stmt).all())
+
+
+def rollback_document(db: Session, user: User, document_id: int) -> Document:
+    """回滚到上一版本:删除当前版本块与独有向量,恢复上一版本为当前版本。仅管理员。"""
+    doc = db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    get_kb_manageable(db, user, doc.kb_id)
+    if doc.version <= 1:
+        raise HTTPException(status_code=400, detail="已是第一个版本,无法回滚")
+
+    current_version = doc.version
+    target_version = current_version - 1
+
+    # 1. 当前版本块(先子块后父块)
+    cur_children = list(db.scalars(
+        select(Chunk).where(
+            Chunk.document_id == document_id,
+            Chunk.parent_id.isnot(None),
+            Chunk.version == current_version,
+        )
+    ).all())
+    cur_parents = list(db.scalars(
+        select(Chunk).where(
+            Chunk.document_id == document_id,
+            Chunk.parent_id.is_(None),
+            Chunk.version == current_version,
+        )
+    ).all())
+    if cur_children:
+        db.execute(delete(Chunk).where(Chunk.id.in_([c.id for c in cur_children])))
+    if cur_parents:
+        db.execute(delete(Chunk).where(Chunk.id.in_([c.id for c in cur_parents])))
+
+    # 2. 删除当前版本独有向量(被其他版本复用的保留)
+    cur_milvus_ids = {c.milvus_id for c in cur_children if c.milvus_id}
+    remaining_ids = set(db.scalars(
+        select(Chunk.milvus_id).where(
+            Chunk.document_id == document_id, Chunk.milvus_id.isnot(None)
+        )
+    ).all())
+    stale = cur_milvus_ids - remaining_ids
+    if stale:
+        delete_chunks(doc.kb_id, sorted(stale))
+
+    # 3. 切换当前版本
+    doc.version = target_version
+    doc.chunk_count = len(list(db.scalars(
+        select(Chunk).where(
+            Chunk.document_id == document_id,
+            Chunk.parent_id.isnot(None),
+            Chunk.version == target_version,
+        )
+    ).all()))
+    db.commit()
+    db.refresh(doc)
+    logger.info("文档回滚: 文档=%s 版本 %s -> %s", doc.filename, current_version, target_version)
+    return doc
 
 
 def update_chunk(db: Session, user: User, chunk_id: int, content: str) -> Chunk:
@@ -271,7 +467,9 @@ def update_chunk(db: Session, user: User, chunk_id: int, content: str) -> Chunk:
     parent.content = content
     db.flush()
 
-    # 3. 重新切分子块并向量化
+    # 3. 重新切分子块并向量化(继承文档当前版本)
+    doc = db.get(Document, parent.document_id)
+    doc_version = doc.version if doc else 1
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=kb.chunk_size, chunk_overlap=kb.chunk_overlap,
         separators=["\n\n", "\n", "。", "!", "?", ";", " ", ""],
@@ -288,6 +486,7 @@ def update_chunk(db: Session, user: User, chunk_id: int, content: str) -> Chunk:
         db.add(Chunk(
             kb_id=parent.kb_id, document_id=parent.document_id,
             content=ct, chunk_index=i, parent_id=parent.id, milvus_id=str(mid),
+            content_hash=_sha256(ct), version=doc_version,
         ))
 
     db.commit()

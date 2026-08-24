@@ -38,7 +38,14 @@ export interface DocumentItem {
   status: string
   error_msg: string | null
   chunk_count: number
+  version: number
   created_at: string
+}
+
+export interface DocumentVersion {
+  version: number
+  parent_count: number
+  is_current: boolean
 }
 
 export interface ChunkItem {
