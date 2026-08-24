@@ -31,7 +31,7 @@ def test_kb_delete(client, auth_headers, department_id):
 def test_kb_department_visibility(
     client, auth_headers, department_id, other_department_id, register_user, set_user_department
 ):
-    """部门隔离:知识库仅本部门可见,其他部门员工看不到。"""
+    """部门隔离:普通知识库仅本部门可见,其他部门员工看不到。"""
     kb_id = _create_kb(client, auth_headers, department_id)
 
     # 其他部门的员工看不到该库
@@ -47,6 +47,52 @@ def test_kb_department_visibility(
     set_user_department(emp_name2, department_id)
     r = client.get("/api/knowledge-bases", headers=dept_headers)
     assert any(kb["id"] == kb_id for kb in r.json())
+
+
+def test_public_kb_visible_to_all(
+    client, auth_headers, department_id, other_department_id, register_user, set_user_department
+):
+    """公开知识库:所有部门用户可见,但仅 super_admin 可管理。"""
+    r = client.post("/api/knowledge-bases", json={
+        "name": "全公司公开库", "department_id": department_id, "is_public": True,
+        "retrieval_type": "hybrid", "chunk_size": 300, "chunk_overlap": 30,
+    }, headers=auth_headers)
+    assert r.status_code == 200, r.text
+    pub_kb_id = r.json()["id"]
+    assert r.json()["is_public"] is True
+
+    # 其他部门员工可见(可查看)
+    emp_name = f"emp_pub_{uuid.uuid4().hex[:8]}"
+    emp_headers = register_user(emp_name)
+    set_user_department(emp_name, other_department_id)
+    r = client.get("/api/knowledge-bases", headers=emp_headers)
+    assert any(kb["id"] == pub_kb_id for kb in r.json())
+
+    # 员工不可删除公开库
+    r = client.delete(f"/api/knowledge-bases/{pub_kb_id}", headers=emp_headers)
+    assert r.status_code in (403, 404)
+
+    # 部门管理员不可删除其他部门的公开库
+    dept_admin_name = f"da_{uuid.uuid4().hex[:8]}"
+    da_headers = register_user(dept_admin_name)
+    set_user_department(dept_admin_name, other_department_id, role="dept_admin")
+    r = client.delete(f"/api/knowledge-bases/{pub_kb_id}", headers=da_headers)
+    assert r.status_code in (403, 404)
+
+    # 清理
+    client.delete(f"/api/knowledge-bases/{pub_kb_id}", headers=auth_headers)
+
+
+def test_dept_admin_cannot_create_public_kb(client, department_id, register_user, set_user_department):
+    """部门管理员不能创建公开知识库。"""
+    da_name = f"da_{uuid.uuid4().hex[:8]}"
+    da_headers = register_user(da_name)
+    set_user_department(da_name, department_id, role="dept_admin")
+    r = client.post("/api/knowledge-bases", json={
+        "name": "越权公开库", "department_id": department_id, "is_public": True,
+        "retrieval_type": "hybrid", "chunk_size": 300, "chunk_overlap": 30,
+    }, headers=da_headers)
+    assert r.status_code == 403
 
 
 def test_employee_cannot_create_or_delete_kb(client, department_id, register_user):

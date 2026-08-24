@@ -16,7 +16,10 @@
           <div class="kb-head">
             <div class="kb-icon">📚</div>
             <div>
-              <div class="kb-name">{{ kb.name }}</div>
+              <div class="kb-name">
+                {{ kb.name }}
+                <el-tag v-if="kb.is_public" size="small" type="success" class="public-tag">公开</el-tag>
+              </div>
               <div class="kb-time">{{ kb.created_at.slice(0, 10) }} · {{ deptName(kb.department_id) }}</div>
             </div>
           </div>
@@ -47,6 +50,10 @@
           <el-select v-model="form.department_id" placeholder="选择部门" style="width: 100%">
             <el-option v-for="d in deptOptions" :key="d.id" :label="d.name" :value="d.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="authStore.isSuperAdmin" label="全公司可见">
+          <el-switch v-model="form.is_public" />
+          <span class="form-tip-inline">开启后所有部门的用户都可查看并用它问答</span>
         </el-form-item>
         <el-form-item label="检索方式">
           <el-radio-group v-model="form.retrieval_type">
@@ -100,6 +107,7 @@ const form = reactive({
   name: '',
   description: '',
   department_id: null as number | null,
+  is_public: false,
   retrieval_type: 'hybrid',
   chunk_size: 500,
   chunk_overlap: 50,
@@ -123,6 +131,7 @@ function openCreate() {
   form.name = ''
   form.description = ''
   form.department_id = authStore.isSuperAdmin ? null : authStore.departmentId
+  form.is_public = false
   form.retrieval_type = 'hybrid'
   form.chunk_size = 500
   form.chunk_overlap = 50
@@ -141,7 +150,7 @@ async function create() {
   }
   creating.value = true
   try {
-    await createKnowledgeBase({ ...form, department_id: form.department_id } as any)
+    await createKnowledgeBase({ ...form, department_id: form.department_id, is_public: form.is_public } as any)
     ElMessage.success('创建成功')
     dialog.value = false
     await load()
@@ -235,5 +244,14 @@ function remove(kb: KnowledgeBase) {
   color: #9aa3b2;
   line-height: 1.5;
   margin: -4px 0 12px 90px;
+}
+.form-tip-inline {
+  font-size: 12px;
+  color: #9aa3b2;
+  margin-left: 10px;
+}
+.public-tag {
+  margin-left: 6px;
+  vertical-align: 2px;
 }
 </style>

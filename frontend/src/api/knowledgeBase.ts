@@ -13,6 +13,7 @@ export function createKnowledgeBase(data: {
   name: string
   description?: string
   department_id: number
+  is_public?: boolean
   retrieval_type: string
   chunk_size: number
   chunk_overlap: number

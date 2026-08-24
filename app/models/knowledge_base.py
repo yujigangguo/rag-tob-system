@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -15,6 +15,7 @@ class KnowledgeBase(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)  # 创建者
     department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"), index=True, nullable=False)  # 所属部门
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # 全公司可见(仅 super_admin 可设)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=True)
     # 检索方式:dense(稠密向量) / hybrid(混合检索)

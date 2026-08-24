@@ -24,10 +24,12 @@ def is_admin(user: User) -> bool:
 def can_manage_kb(user: User, kb: KnowledgeBase) -> bool:
     """能否管理该知识库(创建/删除/编辑/内容管理)。
 
-    - super_admin:所有部门
-    - dept_admin:仅本部门
+    - super_admin:所有部门 + 公开库
+    - dept_admin:仅本部门的普通库(公开库不可管理)
     - employee:不可
     """
+    if kb.is_public:
+        return user.role == ROLE_SUPER_ADMIN
     if user.role == ROLE_SUPER_ADMIN:
         return True
     if user.role == ROLE_DEPT_ADMIN:
@@ -36,7 +38,13 @@ def can_manage_kb(user: User, kb: KnowledgeBase) -> bool:
 
 
 def can_see_kb(user: User, kb: KnowledgeBase) -> bool:
-    """能否看到/使用该知识库(查看、问答)。"""
+    """能否看到/使用该知识库(查看、问答)。
+
+    - 公开库:所有登录用户可见
+    - 普通库:super_admin 全部;dept_admin / employee 仅本部门
+    """
+    if kb.is_public:
+        return True
     if user.role == ROLE_SUPER_ADMIN:
         return True
     return user.department_id is not None and kb.department_id == user.department_id

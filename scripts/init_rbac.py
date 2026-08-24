@@ -58,12 +58,14 @@ def main() -> None:
     with engine.begin() as conn:
         # 2. 加列
         print("--- 增加字段 ---")
-        _ensure_column(
-            conn, "users", "role",
-            "VARCHAR(16) NOT NULL DEFAULT 'employee' COMMENT 'super_admin/dept_admin/employee'",
-        )
+        _ensure_column(conn, "users", "role",
+                       "VARCHAR(16) NOT NULL DEFAULT 'employee' COMMENT 'super_admin/dept_admin/employee'")
         _ensure_column(conn, "users", "department_id", "INT NULL COMMENT '所属部门 id'")
         _ensure_column(conn, "knowledge_bases", "department_id", "INT NULL COMMENT '所属部门 id'")
+        _ensure_column(
+            conn, "knowledge_bases", "is_public",
+            "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '全公司可见(仅 super_admin 可设)'",
+        )
 
         # 3. 预置部门
         print("--- 预置部门 ---")

@@ -10,6 +10,7 @@ class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128, description="知识库名称")
     description: str | None = Field(None, max_length=500, description="描述")
     department_id: int = Field(..., description="所属部门 id")
+    is_public: bool = Field(False, description="全公司可见(仅超级管理员可设为 true)")
     retrieval_type: str = Field("hybrid", pattern="^(dense|hybrid)$", description="检索方式:dense/hybrid")
     chunk_size: int = Field(500, ge=50, le=4000, description="子块大小(检索粒度)")
     chunk_overlap: int = Field(50, ge=0, le=1000, description="重叠大小")
@@ -20,6 +21,7 @@ class KnowledgeBaseUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=128)
     description: str | None = Field(None, max_length=500)
     department_id: int | None = Field(None, description="所属部门(仅系统管理员可调整)")
+    is_public: bool | None = Field(None, description="全公司可见(仅系统管理员可调整)")
     retrieval_type: str | None = Field(None, pattern="^(dense|hybrid)$")
     chunk_size: int | None = Field(None, ge=50, le=4000)
     chunk_overlap: int | None = Field(None, ge=0, le=1000)
@@ -31,6 +33,7 @@ class KnowledgeBaseOut(BaseModel):
     name: str
     description: str | None
     department_id: int
+    is_public: bool
     retrieval_type: str
     chunk_size: int
     chunk_overlap: int
