@@ -91,6 +91,7 @@ def upload_document(db: Session, user_id: int, kb_id: int, file: UploadFile) -> 
         status="pending",
     )
     db.add(doc)
+    kb.doc_count += 1  # 与 delete_document 的 doc_count -= 1 对应
     db.commit()
     db.refresh(doc)
     logger.info("上传文档: kb=%s 文件=%s 类型=%s", kb_id, doc.filename, ext)

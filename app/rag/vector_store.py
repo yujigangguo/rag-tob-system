@@ -3,9 +3,19 @@ from __future__ import annotations
 
 from typing import List
 
-from pymilvus import MilvusClient
+from pymilvus import DataType, MilvusClient
 
 from config.settings import settings
+
+# chunk 写入 Milvus 的 metadata 字段。
+# 显式声明 schema:建库时固定字段结构与类型,不依赖"首次插入的 metadata 隐式推断"。
+# 否则一旦 collection 是旧结构(例如缺 parent_id)就会插入失败,或字段被静默丢弃。
+MILVUS_METADATA_FIELDS = ("kb_id", "document_id", "parent_id", "chunk_index")
+
+
+def _metadata_schema() -> dict:
+    """每次调用新建一份 schema 字典(避免 langchain-milvus 内部 pop 修改共享对象)。"""
+    return {name: {"dtype": DataType.INT64} for name in MILVUS_METADATA_FIELDS}
 
 
 def kb_collection_name(kb_id: int) -> str:
@@ -34,6 +44,7 @@ def get_vector_store(kb_id: int, embeddings):
         collection_name=kb_collection_name(kb_id),
         connection_args=connection_args,
         auto_id=True,
+        metadata_schema=_metadata_schema(),
     )
 
 
