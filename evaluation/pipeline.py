@@ -106,18 +106,27 @@ def retrieve_contexts(db: Session, kb_id: int, question: str, top_n: int | None 
     """真实检索链路:向量 + BM25 + RRF -> 子块映射父块,返回上下文列表。"""
     top_n = top_n or settings.final_top_k
     kb = db.get(KnowledgeBase, kb_id)
-    child_texts = list(
+    child_chunks = list(
         db.scalars(
-            select(Chunk.content).where(
+            select(Chunk).where(
                 Chunk.kb_id == kb_id, Chunk.parent_id.isnot(None)
             )
         ).all()
     )
-    if not child_texts:
+    if not child_chunks:
         raise RuntimeError(f"知识库 {kb_id} 没有已解析的子块,无法检索")
+    chunk_items = [
+        {
+            "content": c.content,
+            "kb_id": c.kb_id,
+            "document_id": c.document_id,
+            "parent_id": c.parent_id,
+        }
+        for c in child_chunks
+    ]
     docs = retrieve_multi_kb(
         [kb_id], get_embeddings(), question,
-        {kb_id: child_texts}, {kb_id: kb.retrieval_type},
+        {kb_id: chunk_items}, {kb_id: kb.retrieval_type},
     )
     parents = _map_to_parents(db, docs)
     return [d.page_content for d in parents[:top_n]]

@@ -57,10 +57,19 @@ export interface ChatSession {
   created_at: string
 }
 
+export interface Citation {
+  index: number
+  kb_id: number
+  document_id: number
+  chunk_id: number | null
+}
+
 export interface ChatMessage {
   id: number
   session_id: number
   role: 'user' | 'assistant'
   content: string
+  citations?: Citation[] | null
+  kb_ids?: number[] | null
   created_at: string
 }

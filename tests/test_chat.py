@@ -49,6 +49,14 @@ def test_chat_stream(client, auth_headers, department_id, wait_doc_parsed):
     assert r.status_code == 200
     assert len(r.json()) >= 1
 
+    # 引用映射与知识库来源应随消息持久化(历史消息可恢复引用链接、可追溯检索来源)
+    r = client.get(f"/api/chat/sessions/{r.json()[0]['id']}/messages", headers=auth_headers)
+    assert r.status_code == 200
+    assert any(
+        m["role"] == "assistant" and "citations" in m and "kb_ids" in m and m["kb_ids"] == [kb_id]
+        for m in r.json()
+    )
+
 
 def test_chat_session_crud(client, auth_headers):
     """会话的创建、重命名、删除。"""

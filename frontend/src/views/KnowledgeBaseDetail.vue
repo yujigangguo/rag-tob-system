@@ -39,7 +39,8 @@
         <div class="panel-title">文档块预览</div>
         <el-empty v-if="!currentDoc" description="点击左侧文档查看其内容块" />
         <template v-else>
-          <div v-for="chunk in chunks" :key="chunk.id" class="chunk-item">
+          <div v-for="chunk in chunks" :key="chunk.id" :id="'chunk-' + chunk.id" class="chunk-item"
+               :class="{ 'chunk-highlight': chunk.id === highlightedChunkId }">
             <div class="chunk-index">#{{ chunk.chunk_index + 1 }}</div>
             <div class="chunk-content">{{ chunk.content }}</div>
             <div class="chunk-actions">
@@ -106,7 +107,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { nextTick, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Upload, UploadFilled, Delete } from '@element-plus/icons-vue'
@@ -145,11 +146,28 @@ const editDialog = ref(false)
 const saving = ref(false)
 const editingChunk = ref<ChunkItem | null>(null)
 const editContent = ref('')
+const highlightedChunkId = ref<number | null>(null)
 
 onMounted(async () => {
   const kbs = await listKnowledgeBases()
   kb.value = kbs.find((k) => k.id === kbId) || null
   await loadDocs()
+  // 深链:从对话引用点击跳转而来,自动打开对应文档并定位到块
+  const targetDocId = Number(route.query.doc) || null
+  if (targetDocId) {
+    const doc = docs.value.find((d) => d.id === targetDocId)
+    if (doc) {
+      await openDoc(doc)
+      const targetChunkId = Number(route.query.chunk) || null
+      if (targetChunkId) {
+        highlightedChunkId.value = targetChunkId
+        nextTick(() => {
+          const el = document.getElementById('chunk-' + targetChunkId)
+          el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        })
+      }
+    }
+  }
 })
 
 async function loadDocs() {
@@ -355,6 +373,11 @@ async function removeChunk(chunk: ChunkItem) {
   border-radius: 12px;
   padding: 14px;
   margin-bottom: 12px;
+}
+.chunk-item.chunk-highlight {
+  border-color: #4f6ef7;
+  background: #eef1ff;
+  box-shadow: 0 0 0 2px rgba(79, 110, 247, 0.15);
 }
 .chunk-index {
   color: #4f6ef7;

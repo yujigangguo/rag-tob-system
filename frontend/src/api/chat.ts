@@ -1,5 +1,7 @@
 import http from './index'
-import type { ChatMessage, ChatSession } from '@/types'
+import type { ChatMessage, ChatSession, Citation } from '@/types'
+
+export type { Citation }
 
 export function listSessions(): Promise<ChatSession[]> {
   return http.get('/chat/sessions').then((r) => r.data)
@@ -33,10 +35,11 @@ export interface ChatParams {
   history_rounds: number
 }
 
-// 流式问答:通过 fetch 读取 SSE,onToken 回调逐字返回
+// 流式问答:通过 fetch 读取 SSE,onToken 回调逐字返回,onCitations 回调接收引用映射
 export async function streamChat(
   params: ChatParams,
   onToken: (token: string) => void,
+  onCitations?: (citations: Citation[]) => void,
 ): Promise<string> {
   const token = localStorage.getItem('token')
   const resp = await fetch('/api/chat/stream', {
@@ -74,6 +77,8 @@ export async function streamChat(
         if (obj.token) {
           full += obj.token
           onToken(obj.token)
+        } else if (obj.citations && onCitations) {
+          onCitations(obj.citations)
         }
       } catch {
         /* 忽略解析失败的块 */

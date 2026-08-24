@@ -110,7 +110,11 @@ def _map_to_parents(db: Session, docs: List[Document]) -> List[Document]:
         if c is not None:
             result.append(Document(
                 page_content=c.content,
-                metadata={"document_id": c.document_id, "parent_id": pid},
+                metadata={
+                    "kb_id": c.kb_id,
+                    "document_id": c.document_id,
+                    "parent_id": pid,  # 父块 id,即 citation 的 chunk_id
+                },
             ))
     return result
 
@@ -136,14 +140,22 @@ def prepare_answer(db: Session, user: User, req: ChatRequest) -> dict:
     if not kbs:
         raise HTTPException(status_code=400, detail="未选择有效的知识库")
 
-    kb_chunks: dict[int, List[str]] = {}
+    kb_chunks: dict[int, List[dict]] = {}
     kb_types: dict[int, str] = {}
     for kb in kbs:
-        # 混合检索的 BM25 用子块文本(检索粒度)
+        # 混合检索的 BM25 用子块文本(检索粒度),并携带元数据以支持父子映射与引用链接
         chunks = list(db.scalars(
-            select(Chunk.content).where(Chunk.kb_id == kb.id, Chunk.parent_id.isnot(None))
+            select(Chunk).where(Chunk.kb_id == kb.id, Chunk.parent_id.isnot(None))
         ).all())
-        kb_chunks[kb.id] = chunks
+        kb_chunks[kb.id] = [
+            {
+                "content": c.content,
+                "kb_id": c.kb_id,
+                "document_id": c.document_id,
+                "parent_id": c.parent_id,
+            }
+            for c in chunks
+        ]
         kb_types[kb.id] = kb.retrieval_type
 
     docs = retrieve_multi_kb(
@@ -154,6 +166,17 @@ def prepare_answer(db: Session, user: User, req: ChatRequest) -> dict:
     # 父子分块:命中的子块映射回父块(去重),以父块作为 LLM 上下文
     context_docs = _map_to_parents(db, docs)
     context = _build_context(context_docs[: settings.final_top_k])
+
+    # 引用映射:[N] -> (kb_id, document_id, chunk_id),供前端渲染可点击引用链接
+    citations: List[dict] = []
+    for i, d in enumerate(context_docs[: settings.final_top_k], 1):
+        meta = d.metadata
+        citations.append({
+            "index": i,
+            "kb_id": meta.get("kb_id"),
+            "document_id": meta.get("document_id"),
+            "chunk_id": meta.get("parent_id"),  # 父块 id;旧数据无 parent_id 时为 None
+        })
 
     # 4. 保存用户消息
     db.add(ChatMessage(session_id=session_id, role="user", content=req.question))
@@ -166,11 +189,23 @@ def prepare_answer(db: Session, user: User, req: ChatRequest) -> dict:
             history=history or "（无）", context=context or "（无相关资料）", question=req.question,
         )),
     ]
-    return {"session_id": session_id, "messages": messages, "context": context}
+    return {
+        "session_id": session_id,
+        "kb_ids": req.kb_ids,
+        "messages": messages,
+        "context": context,
+        "citations": citations,
+    }
 
 
-def stream_answer(messages: list, session_id: int, req: ChatRequest) -> Generator[str, None, None]:
-    """流式生成(逐 token yield),结束后独立会话保存助手消息。"""
+def stream_answer(
+    messages: list,
+    session_id: int,
+    req: ChatRequest,
+    citations: list | None = None,
+    kb_ids: list[int] | None = None,
+) -> Generator[str, None, None]:
+    """流式生成(逐 token yield),结束后独立会话保存助手消息(含引用映射与知识库来源)。"""
     from app.database import SessionLocal
 
     llm = get_llm(
@@ -188,10 +223,16 @@ def stream_answer(messages: list, session_id: int, req: ChatRequest) -> Generato
             full.append(token)
             yield token
 
-    # 流结束后,用独立会话保存助手消息
+    # 流结束后,用独立会话保存助手消息(引用映射与知识库来源一并落库,历史可追溯)
     db = SessionLocal()
     try:
-        db.add(ChatMessage(session_id=session_id, role="assistant", content="".join(full)))
+        db.add(ChatMessage(
+            session_id=session_id,
+            role="assistant",
+            content="".join(full),
+            citations=citations or None,
+            kb_ids=kb_ids or None,
+        ))
         db.commit()
     finally:
         db.close()

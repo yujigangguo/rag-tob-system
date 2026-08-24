@@ -55,13 +55,23 @@ def list_messages(session_id: int, user: User = Depends(get_current_user),
 @router.post("/stream", summary="流式问答(SSE,所有登录用户可用)")
 def stream_chat(req: ChatRequest, user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
-    """SSE 流式输出,每条数据格式: data: {"token": "..."} 结尾 data: [DONE]。"""
+    """SSE 流式输出,每条数据格式: data: {"token": "..."} 结尾 data: {"citations": [...]} 与 data: [DONE]。"""
     prepared = chat_service.prepare_answer(db, user, req)
+    citations = prepared.get("citations", [])
 
     def generate():
         try:
-            for token in chat_service.stream_answer(prepared["messages"], prepared["session_id"], req):
+            for token in chat_service.stream_answer(
+                prepared["messages"],
+                prepared["session_id"],
+                req,
+                prepared.get("citations"),
+                prepared.get("kb_ids"),
+            ):
                 yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
+            # 引用映射:让前端把回答中的 [N] 渲染成可跳转到文档块的链接
+            if citations:
+                yield f"data: {json.dumps({'citations': citations}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:  # 生成过程中出错,以 SSE 形式返回
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"

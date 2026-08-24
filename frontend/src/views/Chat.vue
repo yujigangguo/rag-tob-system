@@ -36,7 +36,28 @@
           <p>开始你的第一次提问吧</p>
         </div>
         <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
-          <div class="bubble">{{ m.content }}</div>
+          <template v-if="m.role === 'user'">
+            <div class="bubble">{{ m.content }}</div>
+          </template>
+          <template v-else>
+            <div class="assistant-block">
+              <div class="bubble">
+                <template v-for="(seg, si) in renderSegments(m)" :key="si">
+                  <span v-if="seg.type === 'text'" class="seg-text">{{ seg.text }}</span>
+                  <a
+                    v-else
+                    class="cite-link"
+                    href="javascript:;"
+                    :title="seg.citation ? '查看引用来源' : undefined"
+                    @click.prevent="seg.citation && goCitation(seg.citation)"
+                  >[{{ seg.text }}]</a>
+                </template>
+              </div>
+              <div v-if="m.kb_ids && m.kb_ids.length" class="msg-source">
+                🔍 检索:{{ kbNames(m.kb_ids) }}
+              </div>
+            </div>
+          </template>
         </div>
         <div v-if="streaming" class="msg assistant">
           <div class="bubble typing"><span class="cursor"></span></div>
@@ -103,7 +124,8 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, reactive, ref } from 'vue'
+import { nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Promotion, ChatLineRound, MoreFilled } from '@element-plus/icons-vue'
 import { listKnowledgeBases } from '@/api/knowledgeBase'
@@ -114,12 +136,26 @@ import {
   listSessions,
   renameSession,
   streamChat,
+  type Citation,
 } from '@/api/chat'
 import type { ChatMessage, ChatSession, KnowledgeBase } from '@/types'
 
+interface Msg extends ChatMessage {
+  citations?: Citation[]
+}
+
+const LAST_KB_KEY = 'chat_last_kb_ids'  // localStorage:记住上次勾选的知识库
+
+interface Seg {
+  type: 'text' | 'cite'
+  text: string
+  citation?: Citation
+}
+
+const router = useRouter()
 const sessions = ref<ChatSession[]>([])
 const currentSessionId = ref<number | null>(null)
-const messages = ref<ChatMessage[]>([])
+const messages = ref<Msg[]>([])
 const kbs = ref<KnowledgeBase[]>([])
 const selectedKbIds = ref<number[]>([])
 const question = ref('')
@@ -136,7 +172,32 @@ const params = reactive({
 
 onMounted(async () => {
   await Promise.all([loadSessions(), loadKbs()])
+  restoreLastKbs()
 })
+
+// 进入页面时恢复上次勾选的知识库(与当前可见库求交集,防止权限变化后勾了不可见的库)
+function restoreLastKbs() {
+  try {
+    const raw = localStorage.getItem(LAST_KB_KEY)
+    if (!raw) return
+    const ids = JSON.parse(raw) as number[]
+    const valid = new Set(kbs.value.map((k) => k.id))
+    selectedKbIds.value = ids.filter((id) => valid.has(id))
+  } catch {
+    /* 忽略损坏的本地数据 */
+  }
+}
+
+// 勾选变化时保存
+watch(selectedKbIds, (ids) => {
+  localStorage.setItem(LAST_KB_KEY, JSON.stringify(ids))
+})
+
+function kbNames(ids: number[]): string {
+  return ids
+    .map((id) => kbs.value.find((k) => k.id === id)?.name || `知识库#${id}`)
+    .join(' · ')
+}
 
 async function loadKbs() {
   kbs.value = await listKnowledgeBases()
@@ -207,6 +268,9 @@ async function send() {
         assistantMsg.content += token
         scrollBottom()
       },
+      (citations) => {
+        assistantMsg.citations = citations
+      },
     )
     // 若新建了会话,刷新会话列表拿到真实 session_id
     if (currentSessionId.value === null) {
@@ -217,6 +281,33 @@ async function send() {
   } finally {
     streaming.value = false
   }
+}
+
+// 把回答拆成普通文本段 + 可点击引用段([N])
+function renderSegments(m: Msg): Seg[] {
+  const segs: Seg[] = []
+  const regex = /\[(\d+)\]/g
+  let last = 0
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(m.content)) !== null) {
+    if (match.index > last) {
+      segs.push({ type: 'text', text: m.content.slice(last, match.index) })
+    }
+    const idx = Number(match[1])
+    const citation = m.citations?.find((c) => c.index === idx)
+    segs.push({ type: 'cite', text: match[1], citation })
+    last = match.index + match[0].length
+  }
+  if (last < m.content.length) {
+    segs.push({ type: 'text', text: m.content.slice(last) })
+  }
+  return segs.length ? segs : [{ type: 'text', text: m.content }]
+}
+
+// 点击引用:跳转到知识库详情并定位到对应文档块
+function goCitation(c: Citation) {
+  const q = `doc=${c.document_id}${c.chunk_id ? `&chunk=${c.chunk_id}` : ''}`
+  router.push(`/knowledge/${c.kb_id}?${q}`)
 }
 
 function scrollBottom() {
@@ -319,6 +410,33 @@ function scrollBottom() {
   word-break: break-word;
   line-height: 1.6;
   font-size: 14px;
+}
+.assistant-block {
+  max-width: 72%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.assistant-block .bubble {
+  max-width: 100%;
+}
+.msg-source {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #9aa3b2;
+}
+.seg-text {
+  white-space: pre-wrap;
+}
+.cite-link {
+  color: #4f6ef7;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  margin: 0 1px;
+}
+.cite-link:hover {
+  color: #3350e0;
 }
 .msg.user .bubble {
   background: linear-gradient(135deg, #4f6ef7, #7b5cf0);

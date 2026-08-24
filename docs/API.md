@@ -1,159 +1,203 @@
 # RAG System 接口文档
 
-基于 FastAPI 的 RAG(检索增强生成)问答服务接口说明。
+基于 FastAPI 的 RAG(检索增强生成)问答服务接口说明。**除 `/health` 外所有接口均需登录后携带 `Authorization: Bearer <token>`**;统一前缀 `/api`。
 
 ## 1. 服务信息
 
 | 项 | 值 |
 |----|-----|
 | 服务框架 | FastAPI |
-| 默认地址 | `http://127.0.0.1:8000` |
-| 协议 | HTTP + JSON(UTF-8) |
-| 启动命令 | `uv run uvicorn app.api:app --host 0.0.0.0 --port 8000` |
+| 默认地址 | `http://127.0.0.1:8000`(Docker 内 `http://backend:8000`) |
+| 交互式文档 | Swagger UI `http://127.0.0.1:8000/docs`、ReDoc `/redoc` |
+| 启动命令 | `uv run uvicorn app.main:app --host 0.0.0.0 --port 8000` |
 
-> 启动时(lifespan)会自动加载 Milvus 向量库与 BM25 索引;
-> 请确保已先执行 `uv run python scripts/ingest.py` 完成建库,否则 `/ask` 无数据可查。
-
-## 2. 在线交互式文档
-
-FastAPI 自动生成,无需额外编写:
-
-- Swagger UI:`http://127.0.0.1:8000/docs` —— 可视化,可在线发请求调试
-- ReDoc:`http://127.0.0.1:8000/redoc` —— 只读文档
+> 权限说明:系统采用三级角色(`super_admin` / `dept_admin` / `employee`)+ 部门隔离,详见 `docs/使用说明.md`。接口标注「仅管理员」的仅 `super_admin` / `dept_admin`(本部门)可调用。
 
 ---
 
-## 3. 接口列表
+## 2. 认证
 
-### 3.1 健康检查
+### 2.1 获取图形验证码
 
-**`GET /health`**
+**`GET /api/auth/captcha`**
 
-用于存活探测 / 负载均衡探活。
+```json
+{ "captcha_id": "cap_...", "captcha_image": "data:image/png;base64,..." }
+```
 
-**响应示例:**
+### 2.2 注册
+
+**`POST /api/auth/register`** — 默认角色 `employee`
+
+```json
+{ "username": "zhangsan", "password": "abc123456", "confirm_password": "abc123456",
+  "captcha_id": "cap_...", "captcha_code": "AB12" }
+```
+
+### 2.3 登录
+
+**`POST /api/auth/login`**
+
+请求同上(用户名/密码/验证码)。响应:
+
+```json
+{
+  "access_token": "eyJ...", "token_type": "bearer",
+  "username": "zhangsan", "role": "employee",
+  "department_id": 1, "department_name": "研发部"
+}
+```
+
+### 2.4 当前用户
+
+**`GET /api/auth/me`**
+
+```json
+{ "id": 2, "username": "zhangsan", "role": "employee", "department_id": 1, "department_name": "研发部" }
+```
+
+---
+
+## 3. 部门
+
+**`GET /api/departments`** — 部门列表(登录即可)
+
+```json
+[ { "id": 1, "name": "研发部" }, { "id": 5, "name": "产品" } ]
+```
+
+---
+
+## 4. 知识库
+
+### 4.1 创建(仅管理员)
+
+**`POST /api/knowledge-bases`**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | 知识库名称 |
+| department_id | int | 是 | 所属部门(dept_admin 只能选本部门) |
+| is_public | bool | 否 | 全公司可见,默认 false(**仅 super_admin 可设 true**) |
+| retrieval_type | string | 否 | `dense` / `hybrid`(默认 hybrid) |
+| chunk_size / chunk_overlap / parent_chunk_size | int | 否 | 子块/重叠/父块大小(默认 500/50/2000) |
+
+响应(KnowledgeBaseOut):
+
+```json
+{
+  "id": 7, "name": "产品知识库", "description": null,
+  "department_id": 5, "is_public": false,
+  "retrieval_type": "hybrid", "chunk_size": 500, "chunk_overlap": 50,
+  "parent_chunk_size": 2000, "doc_count": 0, "created_at": "2026-08-24T10:00:00"
+}
+```
+
+### 4.2 列表 / 详情 / 更新 / 删除
+
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| GET | `/api/knowledge-bases` | 登录 | 本部门库 + 公开库(公开排前) |
+| GET | `/api/knowledge-bases/{id}` | 登录 | 详情(不可见返回 404) |
+| PUT | `/api/knowledge-bases/{id}` | 仅管理员 | 更新;`department_id` / `is_public` 仅 super_admin 可改 |
+| DELETE | `/api/knowledge-bases/{id}` | 仅管理员 | 删除(同步删 Milvus collection 与 MySQL 记录) |
+
+---
+
+## 5. 文档与文档块
+
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| POST | `/api/knowledge-bases/{kb}/documents` | **仅管理员** | 上传文档(multipart,`file` 字段;`chunk_size`/`chunk_overlap` 可选覆盖);单文件 ≤ `MAX_UPLOAD_SIZE_MB`(默认 10),超限返回 413;后台异步解析,立即返回 |
+| GET | `/api/knowledge-bases/{kb}/documents` | 登录 | 文档列表 |
+| GET | `/api/knowledge-bases/{kb}/documents/{id}/progress` | 登录 | 解析进度 `{progress, status}`(pending/parsing/completed/failed) |
+| GET | `/api/knowledge-bases/{kb}/documents/{id}/chunks` | 登录 | 文档块列表(仅父块) |
+| DELETE | `/api/knowledge-bases/{kb}/documents/{id}` | **仅管理员** | 删除文档(向量 + 记录 + 文件) |
+| PUT | `/api/chunks/{id}` | **仅管理员** | 编辑父块(重新切分 + 向量化),body `{"content": "..."}` |
+| DELETE | `/api/chunks/{id}` | **仅管理员** | 删除文档块(连同子块与向量) |
+
+---
+
+## 6. 对话
+
+### 6.1 会话管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/chat/sessions` | 会话列表 |
+| POST | `/api/chat/sessions` | 新建会话,body `{"name": "新对话"}` |
+| PUT | `/api/chat/sessions/{id}` | 重命名 |
+| DELETE | `/api/chat/sessions/{id}` | 删除会话 |
+| GET | `/api/chat/sessions/{id}/messages` | 消息列表 |
+
+消息(ChatMessageOut):
+
+```json
+{
+  "id": 12, "session_id": 3, "role": "assistant",
+  "content": "工作满1年不满3年的员工,每年享有5天带薪年假。[1]",
+  "citations": [ { "index": 1, "kb_id": 6, "document_id": 18, "chunk_id": 42 } ],
+  "kb_ids": [6],
+  "created_at": "2026-08-24T10:00:00"
+}
+```
+
+- `citations`:回答中 [N] 的引用映射(前端据此渲染可点击跳转链接);
+- `kb_ids`:本次问答检索的知识库 id 列表(历史追溯 / 评测用);旧消息为 null。
+
+### 6.2 流式问答(SSE)
+
+**`POST /api/chat/stream`**(所有登录用户可用,按部门可见性校验知识库)
+
+请求:
+
+```json
+{
+  "session_id": null, "question": "年假有几天?",
+  "kb_ids": [6], "model": "qwen-max",
+  "temperature": 0.7, "top_p": 0.8, "max_tokens": 2048, "history_rounds": 5
+}
+```
+
+响应为 `text/event-stream`,事件序列:
+
+```
+data: {"token": "工作"}
+data: {"token": "满1年"}
+...
+data: {"citations": [{"index": 1, "kb_id": 6, "document_id": 18, "chunk_id": 42}]}
+data: [DONE]
+```
+
+- `token` 事件逐字累积为回答文本;
+- `citations` 事件在 [DONE] 前下发一次(无引用时省略);
+- 出错时下发 `data: {"error": "..."}`。
+
+---
+
+## 7. 其他
+
+**`GET /health`** — 存活探测
 
 ```json
 { "status": "ok" }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| status | string | 固定返回 `ok` |
-
----
-
-### 3.2 问答
-
-**`POST /ask`**
-
-提交问题,返回基于知识库生成的回答及引用来源。
-
-**请求体(JSON):**
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| question | string | 是 | 用户问题 |
-
-```json
-{ "question": "年假有几天?" }
-```
-
-**响应(JSON):**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| answer | string | 生成的回答,带 `[来源: xxx]` 标注 |
-| sources | string[] | 本次回答引用的文档路径(重排后 top-k) |
-
-```json
-{
-  "answer": "根据星云科技员工手册,年假天数按工作年限划分 [来源: 员工手册.md]:\n- 工作满 1 年不满 3 年:每年 5 天\n- 工作满 3 年不满 5 年:每年 10 天\n- 工作满 5 年及以上:每年 15 天",
-  "sources": [
-    "E:\\deepseek\\RAG\\data\\raw\\员工手册.md"
-  ]
-}
-```
-
-**状态码:**
-
-| 状态码 | 场景 |
-|--------|------|
-| 200 | 成功(无论是否命中,均返回 `answer`) |
-| 422 | 请求体格式错误(如缺 `question` 字段) |
-| 500 | 服务内部错误(如 LLM / 向量库调用失败) |
-
-> 未命中知识库时,`answer` 会返回「根据已有资料,无法回答该问题」,状态码仍为 200。
-
----
-
-## 4. 调用示例
-
-### 4.1 curl
+## 8. 调用示例
 
 ```bash
-# Windows PowerShell 建议用 curl.exe(正确处理 UTF-8)
-curl.exe -X POST http://127.0.0.1:8000/ask ^
-  -H "Content-Type: application/json" ^
-  -d "{\"question\":\"年假有几天?\"}"
-```
+# 1. 登录拿 token
+curl.exe -X POST http://127.0.0.1:8000/api/auth/login -H "Content-Type: application/json" \
+  -d "{\"username\":\"admin\",\"password\":\"***\",\"captcha_id\":\"cap_...\",\"captcha_code\":\"AB12\"}"
 
-```bash
-# macOS / Linux
-curl -X POST http://127.0.0.1:8000/ask \
+# 2. 带 token 创建知识库(仅管理员)
+curl.exe -X POST http://127.0.0.1:8000/api/knowledge-bases -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"question":"年假有几天?"}'
+  -d "{\"name\":\"产品知识库\",\"department_id\":5,\"is_public\":false}"
+
+# 3. 流式问答
+curl.exe -N -X POST http://127.0.0.1:8000/api/chat/stream -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" -d "{\"question\":\"年假有几天?\",\"kb_ids\":[6]}"
 ```
 
-### 4.2 Python(httpx,推荐,无编码问题)
-
-```python
-import httpx
-
-# 健康检查
-print(httpx.get("http://127.0.0.1:8000/health").json())
-
-# 问答
-r = httpx.post(
-    "http://127.0.0.1:8000/ask",
-    json={"question": "智能音箱多少钱?"},
-    timeout=60,
-)
-data = r.json()
-print("回答:", data["answer"])
-print("来源:", data["sources"])
-```
-
-### 4.3 Python(requests)
-
-```python
-import requests
-
-r = requests.post(
-    "http://127.0.0.1:8000/ask",
-    json={"question": "加班费怎么算?"},
-    timeout=60,
-)
-print(r.json())
-```
-
-### 4.4 JavaScript(fetch)
-
-```javascript
-const r = await fetch("http://127.0.0.1:8000/ask", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ question: "年假有几天?" }),
-});
-const data = await r.json();
-console.log(data.answer);
-```
-
----
-
-## 5. 注意事项
-
-1. **编码**:请求与响应均为 UTF-8。Windows PowerShell 5.1 的 `Invoke-RestMethod` 对中文有 GBK 编码坑,建议用 `curl.exe`、Python `httpx` 或浏览器 `/docs`。
-2. **首问延迟**:首次提问若向量库未加载可能稍慢;服务启动已预热,一般无感。
-3. **重排序**:未配置 `RERANK_API_KEY` 时自动跳过精排,`sources` 为混合检索(向量 + BM25)融合后的前 `FINAL_TOP_K` 条。
-4. **配置项**:模型、检索条数等见 `.env`(或 `config/settings.py`),改后需重启服务。
+> 编码注意:Windows PowerShell 5.1 的 `Invoke-RestMethod` 对中文有 GBK 编码坑,建议用 `curl.exe`、Python `httpx` 或浏览器 `/docs`。

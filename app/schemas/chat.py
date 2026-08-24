@@ -23,6 +23,8 @@ class ChatMessageOut(BaseModel):
     session_id: int
     role: str
     content: str
+    citations: list | None = None   # 引用映射 [{index, kb_id, document_id, chunk_id}]
+    kb_ids: list[int] | None = None  # 本次问答检索的知识库 id 列表
     created_at: datetime
 
     model_config = {"from_attributes": True}

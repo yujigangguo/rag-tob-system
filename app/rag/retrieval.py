@@ -46,13 +46,14 @@ def retrieve_kb(
     kb_id: int,
     embeddings,
     query: str,
-    chunk_texts: List[str],
+    chunk_items: List[dict],
     retrieval_type: str,
     top_k: int,
 ) -> List[Document]:
     """对单个知识库检索。
 
-    :param chunk_texts: 该知识库全部 chunk 文本(用于混合检索的 BM25)。
+    :param chunk_items: 该知识库全部子块,格式 [{content, kb_id, document_id, parent_id}, ...]
+        (用于混合检索的 BM25,并携带元数据以支持父子分块映射与引用链接)。
     """
     store = get_vector_store(kb_id, embeddings)
     vector_hits = store.similarity_search(query, k=top_k)
@@ -60,9 +61,18 @@ def retrieve_kb(
     if retrieval_type == "dense":
         return vector_hits
 
-    # 混合检索:向量 + BM25 -> RRF 融合
+    # 混合检索:向量 + BM25 -> RRF 融合(BM25 命中携带与向量一致的元数据)
+    corpus = [c["content"] for c in chunk_items]
     bm25_hits = [
-        Document(page_content=chunk_texts[i]) for i in _bm25_top_indices(chunk_texts, query, top_k)
+        Document(
+            page_content=chunk_items[i]["content"],
+            metadata={
+                "kb_id": chunk_items[i].get("kb_id"),
+                "document_id": chunk_items[i].get("document_id"),
+                "parent_id": chunk_items[i].get("parent_id"),
+            },
+        )
+        for i in _bm25_top_indices(corpus, query, top_k)
     ]
     return rrf_fusion([vector_hits, bm25_hits])[:top_k]
 
@@ -71,7 +81,7 @@ def retrieve_multi_kb(
     kb_ids: List[int],
     embeddings,
     query: str,
-    kb_chunks: dict[int, List[str]],
+    kb_chunks: dict[int, List[dict]],
     kb_retrieval_types: dict[int, str],
     top_k: int | None = None,
 ) -> List[Document]:

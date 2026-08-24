@@ -66,6 +66,14 @@ def main() -> None:
             conn, "knowledge_bases", "is_public",
             "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '全公司可见(仅 super_admin 可设)'",
         )
+        _ensure_column(
+            conn, "chat_messages", "citations",
+            "JSON NULL COMMENT '引用映射:[{index, kb_id, document_id, chunk_id}]'",
+        )
+        _ensure_column(
+            conn, "chat_messages", "kb_ids",
+            "JSON NULL COMMENT '本次问答检索的知识库 id 列表'",
+        )
 
         # 3. 预置部门
         print("--- 预置部门 ---")
