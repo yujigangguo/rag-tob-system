@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     raw_data_dir: str = str(BASE_DIR / "data" / "raw")
     processed_data_dir: str = str(BASE_DIR / "data" / "processed")
 
+    # ---------- 上传限制 ----------
+    max_upload_size_mb: int = 10    # 单文件上传上限(需与前端 nginx client_max_body_size 一致)
+
     @property
     def database_url(self) -> str:
         """SQLAlchemy 数据库连接串(MySQL + PyMySQL)。"""

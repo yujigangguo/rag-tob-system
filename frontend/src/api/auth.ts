@@ -1,4 +1,5 @@
 import http from './index'
+import type { LoginResult, Role } from '@/types'
 
 export interface CaptchaData {
   captcha_id: string
@@ -7,6 +8,16 @@ export interface CaptchaData {
 
 export function getCaptcha(): Promise<CaptchaData> {
   return http.get('/auth/captcha').then((r) => r.data)
+}
+
+export function getMe(): Promise<{
+  id: number
+  username: string
+  role: Role
+  department_id: number | null
+  department_name: string | null
+}> {
+  return http.get('/auth/me').then((r) => r.data)
 }
 
 export function register(data: {
@@ -24,6 +35,6 @@ export function login(data: {
   password: string
   captcha_id: string
   captcha_code: string
-}): Promise<{ access_token: string; token_type: string; username: string }> {
+}): Promise<LoginResult> {
   return http.post('/auth/login', data).then((r) => r.data)
 }

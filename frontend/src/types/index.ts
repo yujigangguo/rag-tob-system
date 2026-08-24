@@ -1,9 +1,26 @@
 // 全局类型定义
 
+export type Role = 'super_admin' | 'dept_admin' | 'employee'
+
+export interface Department {
+  id: number
+  name: string
+}
+
+export interface LoginResult {
+  access_token: string
+  token_type: string
+  username: string
+  role: Role
+  department_id: number | null
+  department_name: string | null
+}
+
 export interface KnowledgeBase {
   id: number
   name: string
   description: string | null
+  department_id: number
   retrieval_type: string
   chunk_size: number
   chunk_overlap: number

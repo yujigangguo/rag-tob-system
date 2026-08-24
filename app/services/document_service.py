@@ -1,7 +1,6 @@
 """文档业务逻辑:上传、解析、向量化、文档块管理。"""
 from __future__ import annotations
 
-import shutil
 import threading
 from pathlib import Path
 
@@ -11,11 +10,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.logging_config import get_logger
-from app.models import Chunk, Document, KnowledgeBase
+from app.models import Chunk, Document, KnowledgeBase, User
 from app.rag.embeddings import get_embeddings
 from app.rag.parsers import SUPPORTED_TYPES, is_image, parse_file
 from app.rag.vector_store import add_chunks, delete_chunks
-from app.services.kb_service import get_kb
+from app.services.kb_service import get_kb, get_kb_manageable
 from config.settings import settings
 
 logger = get_logger(__name__)
@@ -70,18 +69,40 @@ def _ext(filename: str) -> str:
     return Path(filename).suffix.lower().lstrip(".")
 
 
-def upload_document(db: Session, user_id: int, kb_id: int, file: UploadFile) -> Document:
-    """保存上传文件并创建文档记录(status=pending)。"""
-    kb = get_kb(db, user_id, kb_id)
+def upload_document(db: Session, user: User, kb_id: int, file: UploadFile) -> Document:
+    """保存上传文件并创建文档记录(status=pending)。仅管理员可操作。"""
+    kb = get_kb_manageable(db, user, kb_id)
     ext = _ext(file.filename or "")
     if ext not in SUPPORTED_TYPES:
         raise HTTPException(status_code=400, detail=f"不支持的文件类型: .{ext}")
 
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    # 快速预检:nginx 已转发 Content-Length,超限直接拒绝
+    if file.size and file.size > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件过大:最大支持 {settings.max_upload_size_mb}MB",
+        )
+
     save_dir = Path(settings.upload_dir) / str(kb_id)
     save_dir.mkdir(parents=True, exist_ok=True)
     file_path = save_dir / file.filename
-    with open(file_path, "wb") as out:
-        shutil.copyfileobj(file.file, out)
+
+    # 流式写入并计数,防止无 Content-Length 时绕过预检
+    size = 0
+    try:
+        with open(file_path, "wb") as out:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件过大:最大支持 {settings.max_upload_size_mb}MB",
+                    )
+                out.write(chunk)
+    except HTTPException:
+        file_path.unlink(missing_ok=True)  # 清理已写入的部分
+        raise
 
     doc = Document(
         kb_id=kb_id,
@@ -94,7 +115,7 @@ def upload_document(db: Session, user_id: int, kb_id: int, file: UploadFile) -> 
     kb.doc_count += 1  # 与 delete_document 的 doc_count -= 1 对应
     db.commit()
     db.refresh(doc)
-    logger.info("上传文档: kb=%s 文件=%s 类型=%s", kb_id, doc.filename, ext)
+    logger.info("上传文档: kb=%s 文件=%s 类型=%s 大小=%sKB", kb_id, doc.filename, ext, size // 1024)
     return doc
 
 
@@ -211,18 +232,18 @@ def parse_and_index(db: Session, document_id: int, chunk_size: int | None = None
         raise
 
 
-def list_documents(db: Session, user_id: int, kb_id: int) -> list[Document]:
-    get_kb(db, user_id, kb_id)
+def list_documents(db: Session, user: User, kb_id: int) -> list[Document]:
+    get_kb(db, user, kb_id)
     stmt = select(Document).where(Document.kb_id == kb_id).order_by(Document.id.desc())
     return list(db.scalars(stmt).all())
 
 
-def list_chunks(db: Session, user_id: int, document_id: int) -> list[Chunk]:
+def list_chunks(db: Session, user: User, document_id: int) -> list[Chunk]:
     """文档块列表(父子分块:仅返回父块,父块是语义单位)。"""
     doc = db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    get_kb(db, user_id, doc.kb_id)
+    get_kb(db, user, doc.kb_id)
     stmt = (
         select(Chunk)
         .where(Chunk.document_id == document_id, Chunk.parent_id.is_(None))
@@ -231,12 +252,12 @@ def list_chunks(db: Session, user_id: int, document_id: int) -> list[Chunk]:
     return list(db.scalars(stmt).all())
 
 
-def update_chunk(db: Session, user_id: int, chunk_id: int, content: str) -> Chunk:
-    """编辑父块:更新文本 -> 删除旧子块 -> 重新切分并向量化。"""
+def update_chunk(db: Session, user: User, chunk_id: int, content: str) -> Chunk:
+    """编辑父块:更新文本 -> 删除旧子块 -> 重新切分并向量化。仅管理员可操作。"""
     parent = db.get(Chunk, chunk_id)
     if parent is None:
         raise HTTPException(status_code=404, detail="文档块不存在")
-    get_kb(db, user_id, parent.kb_id)
+    get_kb_manageable(db, user, parent.kb_id)
     kb = db.get(KnowledgeBase, parent.kb_id)
 
     # 1. 删除旧子块(向量 + 记录)
@@ -275,12 +296,12 @@ def update_chunk(db: Session, user_id: int, chunk_id: int, content: str) -> Chun
     return parent
 
 
-def delete_chunk(db: Session, user_id: int, chunk_id: int) -> None:
-    """删除文档块(父块连同其子块与向量一并删除)。"""
+def delete_chunk(db: Session, user: User, chunk_id: int) -> None:
+    """删除文档块(父块连同其子块与向量一并删除)。仅管理员可操作。"""
     chunk = db.get(Chunk, chunk_id)
     if chunk is None:
         raise HTTPException(status_code=404, detail="文档块不存在")
-    get_kb(db, user_id, chunk.kb_id)
+    get_kb_manageable(db, user, chunk.kb_id)
 
     # 删除子块向量
     children = list(db.scalars(select(Chunk).where(Chunk.parent_id == chunk.id)).all())
@@ -296,12 +317,12 @@ def delete_chunk(db: Session, user_id: int, chunk_id: int) -> None:
     db.commit()
 
 
-def delete_document(db: Session, user_id: int, document_id: int) -> None:
-    """删除文档及其所有 chunk(向量 + 记录 + 文件)。"""
+def delete_document(db: Session, user: User, document_id: int) -> None:
+    """删除文档及其所有 chunk(向量 + 记录 + 文件)。仅管理员可操作。"""
     doc = db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    kb = get_kb(db, user_id, doc.kb_id)
+    kb = get_kb_manageable(db, user, doc.kb_id)
 
     # 删除该文档所有 chunk 向量
     chunks = list(db.scalars(select(Chunk).where(Chunk.document_id == document_id)).all())
@@ -309,6 +330,7 @@ def delete_document(db: Session, user_id: int, document_id: int) -> None:
     if milvus_ids:
         delete_chunks(doc.kb_id, milvus_ids)
 
+    db.execute(delete(Chunk).where(Chunk.document_id == document_id, Chunk.parent_id.isnot(None)))
     db.execute(delete(Chunk).where(Chunk.document_id == document_id))
     db.delete(doc)
     if kb.doc_count > 0:

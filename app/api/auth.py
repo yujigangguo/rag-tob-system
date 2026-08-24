@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.deps import get_current_user
+from app.models import User
 from app.schemas.auth import (
     CaptchaResponse,
     LoginRequest,
@@ -32,3 +34,20 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse, summary="登录")
 def login(req: LoginRequest, db: Session = Depends(get_db)):
     return auth_service.login(db, req)
+
+
+@router.get("/me", summary="当前登录用户信息")
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.models import Department
+
+    dept_name = None
+    if user.department_id is not None:
+        dept = db.get(Department, user.department_id)
+        dept_name = dept.name if dept else None
+    return {
+        "id": user.id,
+        "username": user.username,
+        "role": user.role,
+        "department_id": user.department_id,
+        "department_name": dept_name,
+    }

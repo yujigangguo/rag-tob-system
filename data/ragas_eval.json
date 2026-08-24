@@ -1,0 +1,82 @@
+[
+  {
+    "question": "工作满1年不满3年的员工,每年有几天的带薪年假?",
+    "gold_answer": "工作满 1 年不满 3 年的员工,每年享有 5 天带薪年假。",
+    "gold_sources": ["员工手册.md"]
+  },
+  {
+    "question": "年假当年没休完怎么办?",
+    "gold_answer": "年假须在当年 12 月 31 日前休完,未休部分可顺延至次年 3 月底。",
+    "gold_sources": ["员工手册.md"]
+  },
+  {
+    "question": "请病假需要提供什么材料?",
+    "gold_answer": "病假须提供三甲医院开具的病假证明;连续病假超过 3 天还须在上班前向直属主管报备。",
+    "gold_sources": ["员工手册.md"]
+  },
+  {
+    "question": "每年最多可以休多少天带薪病假?",
+    "gold_answer": "每年最多可休 12 天带薪病假,超出部分按无薪处理。",
+    "gold_sources": ["员工手册.md"]
+  },
+  {
+    "question": "差旅住宿标准是多少?",
+    "gold_answer": "一线城市每晚不超过 400 元,其他城市每晚不超过 300 元。",
+    "gold_sources": ["员工手册.md"]
+  },
+  {
+    "question": "差旅报销需要在多长时间内提交?",
+    "gold_answer": "差旅报销须在行程结束后 30 天内提交。",
+    "gold_sources": ["员工手册.md"]
+  },
+  {
+    "question": "工作日加班费按多少倍工资计算?",
+    "gold_answer": "工作日加班按 1.5 倍工资计算。",
+    "gold_sources": ["员工手册.md"]
+  },
+  {
+    "question": "法定节假日加班怎么算?",
+    "gold_answer": "法定节假日加班按 3 倍工资计算,且加班须提前在 OA 系统申请并经主管审批。",
+    "gold_sources": ["员工手册.md"]
+  },
+  {
+    "question": "正式员工离职需要提前多久通知?",
+    "gold_answer": "正式员工离职须提前 30 天书面通知,并完成工作交接和资产归还。",
+    "gold_sources": ["员工手册.md"]
+  },
+  {
+    "question": "星云智能音箱 X1 的官方售价是多少?",
+    "gold_answer": "官方售价 499 元人民币。",
+    "gold_sources": ["产品说明-星云智能音箱.md"]
+  },
+  {
+    "question": "星云智能音箱 X1 的保修政策是怎样的?",
+    "gold_answer": "整机保修 1 年,主要部件保修 3 年;7 天无理由退货,15 天内质量问题换新。",
+    "gold_sources": ["产品说明-星云智能音箱.md"]
+  },
+  {
+    "question": "星云智能音箱 X1 支持哪些无线连接方式?",
+    "gold_answer": "支持 Wi-Fi 6 和蓝牙 5.3。",
+    "gold_sources": ["产品说明-星云智能音箱.md"]
+  },
+  {
+    "question": "音箱无法连接 Wi-Fi 时应该怎么处理?",
+    "gold_answer": "请确认路由器支持 2.4GHz 频段,并靠近音箱后重试。",
+    "gold_sources": ["产品说明-星云智能音箱.md"]
+  },
+  {
+    "question": "忘记密码怎么办?",
+    "gold_answer": "在登录页点击忘记密码,通过绑定的手机号或邮箱重置密码。",
+    "gold_sources": ["常见问题FAQ.md"]
+  },
+  {
+    "question": "会议室怎么预订?",
+    "gold_answer": "在 OA 系统的会议室预订模块选择空闲时段预订,单次最长 2 小时。",
+    "gold_sources": ["常见问题FAQ.md"]
+  },
+  {
+    "question": "公司内网 VPN 怎么开通?",
+    "gold_answer": "向 IT 部门提交 VPN 开通申请,审批通过后会收到配置指引。",
+    "gold_sources": ["常见问题FAQ.md"]
+  }
+]

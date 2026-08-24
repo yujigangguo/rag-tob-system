@@ -10,7 +10,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.logging_config import get_logger
-from app.models import ChatMessage, ChatSession, Chunk, KnowledgeBase
+from app.models import ChatMessage, ChatSession, Chunk, KnowledgeBase, User
+from app.rbac import visible_department_ids
 from app.rag.embeddings import get_embeddings
 from app.rag.llm import get_llm
 from app.rag.prompts import RAG_SYSTEM_PROMPT, RAG_USER_PROMPT
@@ -114,27 +115,24 @@ def _map_to_parents(db: Session, docs: List[Document]) -> List[Document]:
     return result
 
 
-def prepare_answer(db: Session, user_id: int, req: ChatRequest) -> dict:
+def prepare_answer(db: Session, user: User, req: ChatRequest) -> dict:
     """检索 + 保存用户消息 + 构造 messages(在请求线程内完成)。"""
     # 1. 会话(不存在则新建)
     if req.session_id is not None:
-        session = _get_session(db, user_id, req.session_id)
+        session = _get_session(db, user.id, req.session_id)
         session_id = session.id
     else:
-        session_id = create_session(db, user_id, req.session_name or "新对话").id
+        session_id = create_session(db, user.id, req.session_name or "新对话").id
 
     # 2. 历史对话
     history = _build_history(db, session_id, req.history_rounds)
 
-    # 3. 检索(校验知识库归属)
-    kbs = list(
-        db.scalars(
-            select(KnowledgeBase).where(
-                KnowledgeBase.id.in_(req.kb_ids),
-                KnowledgeBase.user_id == user_id,
-            )
-        ).all()
-    )
+    # 3. 检索(按部门可见性过滤知识库)
+    stmt = select(KnowledgeBase).where(KnowledgeBase.id.in_(req.kb_ids))
+    dept_ids = visible_department_ids(user)
+    if dept_ids is not None:
+        stmt = stmt.where(KnowledgeBase.department_id.in_(dept_ids))
+    kbs = list(db.scalars(stmt).all())
     if not kbs:
         raise HTTPException(status_code=400, detail="未选择有效的知识库")
 

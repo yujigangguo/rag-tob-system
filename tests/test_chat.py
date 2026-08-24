@@ -8,9 +8,10 @@ import pytest
 from config.settings import settings
 
 
-def _prepare_kb_with_doc(client, headers) -> int:
+def _prepare_kb_with_doc(client, headers, department_id: int, wait_doc_parsed) -> int:
     r = client.post("/api/knowledge-bases", json={
         "name": "问答测试库", "retrieval_type": "hybrid",
+        "department_id": department_id,
         "chunk_size": 300, "chunk_overlap": 30,
     }, headers=headers)
     assert r.status_code == 200
@@ -21,15 +22,16 @@ def _prepare_kb_with_doc(client, headers) -> int:
                         files={"file": ("员工手册.md", f, "text/markdown")},
                         headers=headers)
     assert r.status_code == 200
+    wait_doc_parsed(headers, kb_id, r.json()["id"])
     return kb_id
 
 
-def test_chat_stream(client, auth_headers):
+def test_chat_stream(client, auth_headers, department_id, wait_doc_parsed):
     """流式问答:应返回 SSE 格式并最终给出 [DONE]。"""
     if not settings.llm_api_key:
         pytest.skip("未配置 LLM_API_KEY,跳过问答测试")
 
-    kb_id = _prepare_kb_with_doc(client, auth_headers)
+    kb_id = _prepare_kb_with_doc(client, auth_headers, department_id, wait_doc_parsed)
 
     r = client.post("/api/chat/stream", json={
         "question": "年假有几天?",

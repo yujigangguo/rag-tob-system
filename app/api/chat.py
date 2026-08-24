@@ -52,11 +52,11 @@ def list_messages(session_id: int, user: User = Depends(get_current_user),
     return chat_service.list_messages(db, user.id, session_id)
 
 
-@router.post("/stream", summary="流式问答(SSE)")
+@router.post("/stream", summary="流式问答(SSE,所有登录用户可用)")
 def stream_chat(req: ChatRequest, user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
     """SSE 流式输出,每条数据格式: data: {"token": "..."} 结尾 data: [DONE]。"""
-    prepared = chat_service.prepare_answer(db, user.id, req)
+    prepared = chat_service.prepare_answer(db, user, req)
 
     def generate():
         try:

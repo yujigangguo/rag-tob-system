@@ -52,6 +52,8 @@ def test_login_success(client):
     })
     assert r.status_code == 200
     assert "access_token" in r.json()
+    # 新注册用户默认角色为 employee
+    assert r.json()["role"] == "employee"
 
 
 def test_login_wrong_password(client):

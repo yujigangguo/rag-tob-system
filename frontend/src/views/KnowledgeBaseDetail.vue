@@ -8,7 +8,7 @@
           {{ kb?.retrieval_type === 'hybrid' ? '混合检索' : '稠密检索' }}
         </el-tag>
       </div>
-      <el-button type="primary" class="gradient-btn" :icon="Upload" @click="uploadDialog = true">
+      <el-button v-if="isAdmin" type="primary" class="gradient-btn" :icon="Upload" @click="uploadDialog = true">
         上传文档
       </el-button>
     </div>
@@ -30,7 +30,7 @@
             <el-tag size="small" :type="statusType(doc.status)">{{ statusText(doc.status) }}</el-tag>
             <span>块 {{ doc.chunk_count }}</span>
           </div>
-          <el-icon class="doc-del" @click.stop="removeDoc(doc)"><Delete /></el-icon>
+          <el-icon v-if="isAdmin" class="doc-del" @click.stop="removeDoc(doc)"><Delete /></el-icon>
         </div>
       </div>
 
@@ -43,8 +43,8 @@
             <div class="chunk-index">#{{ chunk.chunk_index + 1 }}</div>
             <div class="chunk-content">{{ chunk.content }}</div>
             <div class="chunk-actions">
-              <el-button text size="small" type="primary" @click="editChunk(chunk)">编辑</el-button>
-              <el-button text size="small" type="danger" @click="removeChunk(chunk)">删除</el-button>
+              <el-button v-if="isAdmin" text size="small" type="primary" @click="editChunk(chunk)">编辑</el-button>
+              <el-button v-if="isAdmin" text size="small" type="danger" @click="removeChunk(chunk)">删除</el-button>
             </div>
           </div>
         </template>
@@ -63,7 +63,7 @@
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽文件到此处,或<em>点击选择</em></div>
         <template #tip>
-          <div class="el-upload__tip">支持 PDF、PPT、Markdown、TXT、图片(图片暂不解析内容)</div>
+          <div class="el-upload__tip">支持 PDF、PPT、Markdown、TXT、图片(图片暂不解析内容);单个文件最大 10MB</div>
         </template>
       </el-upload>
 
@@ -110,6 +110,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Upload, UploadFilled, Delete } from '@element-plus/icons-vue'
+import { useAuthStore } from '@/stores/auth'
 import {
   deleteChunk,
   deleteDocument,
@@ -124,6 +125,8 @@ import type { ChunkItem, DocumentItem, KnowledgeBase } from '@/types'
 
 const route = useRoute()
 const kbId = Number(route.params.id)
+const authStore = useAuthStore()
+const isAdmin = authStore.isAdmin
 
 const kb = ref<KnowledgeBase | null>(null)
 const docs = ref<DocumentItem[]>([])

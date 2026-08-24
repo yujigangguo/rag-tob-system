@@ -31,10 +31,15 @@
           <span class="user">
             <el-avatar :size="30" class="avatar">{{ authStore.username.charAt(0).toUpperCase() }}</el-avatar>
             <span class="username">{{ authStore.username }}</span>
+            <el-tag v-if="authStore.isSuperAdmin" size="small" type="danger" class="role-tag">系统管理员</el-tag>
+            <el-tag v-else-if="authStore.role === 'dept_admin'" size="small" type="warning" class="role-tag">部门管理员</el-tag>
             <el-icon><ArrowDown /></el-icon>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item disabled v-if="authStore.departmentName">
+                部门:{{ authStore.departmentName }}
+              </el-dropdown-item>
               <el-dropdown-item command="logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -126,6 +131,9 @@ function onCommand(cmd: string) {
 }
 .username {
   font-size: 14px;
+}
+.role-tag {
+  margin: 0 2px;
 }
 .main {
   padding: 20px;

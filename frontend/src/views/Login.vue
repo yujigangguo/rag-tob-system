@@ -84,7 +84,7 @@ async function handleLogin() {
   loading.value = true
   try {
     const data = await login(form)
-    authStore.setLogin(data.username, data.access_token)
+    authStore.setLogin(data.username, data.access_token, data.role, data.department_id, data.department_name)
     ElMessage.success('登录成功')
     router.push('/chat')
   } catch {

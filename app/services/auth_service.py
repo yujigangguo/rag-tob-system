@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.logging_config import get_logger
-from app.models import User
+from app.models import Department, User
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.security import create_access_token, hash_password, verify_captcha, verify_password
 
@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 
 
 def register(db: Session, req: RegisterRequest) -> User:
-    """用户注册:校验两次密码一致 + 验证码 + 用户名唯一。"""
+    """用户注册:校验两次密码一致 + 验证码 + 用户名唯一。默认角色 employee。"""
     if req.password != req.confirm_password:
         raise HTTPException(status_code=400, detail="两次输入的密码不一致")
     if not verify_captcha(req.captcha_id, req.captcha_code):
@@ -22,7 +22,7 @@ def register(db: Session, req: RegisterRequest) -> User:
     exists = db.scalar(select(User).where(User.username == req.username))
     if exists is not None:
         raise HTTPException(status_code=400, detail="该账号名称已被注册")
-    user = User(username=req.username, password_hash=hash_password(req.password))
+    user = User(username=req.username, password_hash=hash_password(req.password), role="employee")
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -31,12 +31,23 @@ def register(db: Session, req: RegisterRequest) -> User:
 
 
 def login(db: Session, req: LoginRequest) -> dict:
-    """用户登录:校验验证码 + 账号密码,返回 JWT。"""
+    """用户登录:校验验证码 + 账号密码,返回 JWT 与角色/部门信息。"""
     if not verify_captcha(req.captcha_id, req.captcha_code):
         raise HTTPException(status_code=400, detail="验证码错误或已过期")
     user = db.scalar(select(User).where(User.username == req.username))
     if user is None or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=400, detail="账号或密码错误")
     token = create_access_token(user.id, user.username)
-    logger.info("用户登录成功: id=%s username=%s", user.id, user.username)
-    return {"access_token": token, "token_type": "bearer", "username": user.username}
+    dept_name = None
+    if user.department_id is not None:
+        dept = db.get(Department, user.department_id)
+        dept_name = dept.name if dept else None
+    logger.info("用户登录成功: id=%s username=%s 角色=%s", user.id, user.username, user.role)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "username": user.username,
+        "role": user.role,
+        "department_id": user.department_id,
+        "department_name": dept_name,
+    }

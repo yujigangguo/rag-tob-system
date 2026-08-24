@@ -5,10 +5,10 @@
         <h2>知识库管理</h2>
         <p class="sub">创建多个知识库,每个知识库可上传多个文档</p>
       </div>
-      <el-button type="primary" class="gradient-btn" :icon="Plus" @click="openCreate">创建知识库</el-button>
+      <el-button v-if="isAdmin" type="primary" class="gradient-btn" :icon="Plus" @click="openCreate">创建知识库</el-button>
     </div>
 
-    <el-empty v-if="kbs.length === 0" description="还没有知识库,点击右上角创建" />
+    <el-empty v-if="kbs.length === 0" description="还没有知识库,请联系管理员创建" />
 
     <el-row :gutter="16">
       <el-col v-for="kb in kbs" :key="kb.id" :xs="24" :sm="12" :md="8">
@@ -17,7 +17,7 @@
             <div class="kb-icon">📚</div>
             <div>
               <div class="kb-name">{{ kb.name }}</div>
-              <div class="kb-time">{{ kb.created_at.slice(0, 10) }}</div>
+              <div class="kb-time">{{ kb.created_at.slice(0, 10) }} · {{ deptName(kb.department_id) }}</div>
             </div>
           </div>
           <div class="kb-desc">{{ kb.description || '暂无描述' }}</div>
@@ -28,8 +28,8 @@
             <span class="doc-count">文档 {{ kb.doc_count }} 个</span>
           </div>
           <div class="kb-actions">
-            <el-button text type="primary" @click.stop="goDetail(kb.id)">管理</el-button>
-            <el-button text type="danger" @click.stop="remove(kb)">删除</el-button>
+            <el-button text type="primary" @click.stop="goDetail(kb.id)">查看</el-button>
+            <el-button v-if="isAdmin" text type="danger" @click.stop="remove(kb)">删除</el-button>
           </div>
         </el-card>
       </el-col>
@@ -42,6 +42,11 @@
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="所属部门" required>
+          <el-select v-model="form.department_id" placeholder="选择部门" style="width: 100%">
+            <el-option v-for="d in deptOptions" :key="d.id" :label="d.name" :value="d.id" />
+          </el-select>
         </el-form-item>
         <el-form-item label="检索方式">
           <el-radio-group v-model="form.retrieval_type">
@@ -69,28 +74,46 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { createKnowledgeBase, deleteKnowledgeBase, listKnowledgeBases } from '@/api/knowledgeBase'
-import type { KnowledgeBase } from '@/types'
+import { createKnowledgeBase, deleteKnowledgeBase, listDepartments, listKnowledgeBases } from '@/api/knowledgeBase'
+import { useAuthStore } from '@/stores/auth'
+import type { Department, KnowledgeBase } from '@/types'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const kbs = ref<KnowledgeBase[]>([])
+const departments = ref<Department[]>([])
 const dialog = ref(false)
 const creating = ref(false)
+
+const isAdmin = computed(() => authStore.isAdmin)
+// super_admin 可选全部部门;dept_admin 只能选本部门
+const deptOptions = computed(() => {
+  if (authStore.isSuperAdmin) return departments.value
+  return departments.value.filter((d) => d.id === authStore.departmentId)
+})
 
 const form = reactive({
   name: '',
   description: '',
+  department_id: null as number | null,
   retrieval_type: 'hybrid',
   chunk_size: 500,
   chunk_overlap: 50,
   parent_chunk_size: 2000,
 })
 
-onMounted(load)
+function deptName(id: number): string {
+  return departments.value.find((d) => d.id === id)?.name || `部门#${id}`
+}
+
+onMounted(async () => {
+  departments.value = await listDepartments()
+  await load()
+})
 
 async function load() {
   kbs.value = await listKnowledgeBases()
@@ -99,6 +122,7 @@ async function load() {
 function openCreate() {
   form.name = ''
   form.description = ''
+  form.department_id = authStore.isSuperAdmin ? null : authStore.departmentId
   form.retrieval_type = 'hybrid'
   form.chunk_size = 500
   form.chunk_overlap = 50
@@ -111,9 +135,13 @@ async function create() {
     ElMessage.warning('请输入知识库名称')
     return
   }
+  if (form.department_id === null) {
+    ElMessage.warning('请选择所属部门')
+    return
+  }
   creating.value = true
   try {
-    await createKnowledgeBase(form)
+    await createKnowledgeBase({ ...form, department_id: form.department_id } as any)
     ElMessage.success('创建成功')
     dialog.value = false
     await load()

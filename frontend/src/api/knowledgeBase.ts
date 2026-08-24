@@ -1,5 +1,9 @@
 import http from './index'
-import type { ChunkItem, DocumentItem, KnowledgeBase } from '@/types'
+import type { ChunkItem, Department, DocumentItem, KnowledgeBase } from '@/types'
+
+export function listDepartments(): Promise<Department[]> {
+  return http.get('/departments').then((r) => r.data)
+}
 
 export function listKnowledgeBases(): Promise<KnowledgeBase[]> {
   return http.get('/knowledge-bases').then((r) => r.data)
@@ -8,6 +12,7 @@ export function listKnowledgeBases(): Promise<KnowledgeBase[]> {
 export function createKnowledgeBase(data: {
   name: string
   description?: string
+  department_id: number
   retrieval_type: string
   chunk_size: number
   chunk_overlap: number

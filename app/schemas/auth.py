@@ -28,10 +28,15 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     username: str
+    role: str = "employee"            # super_admin / dept_admin / employee
+    department_id: int | None = None
+    department_name: str | None = None
 
 
 class UserOut(BaseModel):
     id: int
     username: str
+    role: str
+    department_id: int | None
 
     model_config = {"from_attributes": True}
