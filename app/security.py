@@ -8,6 +8,7 @@ import random
 import string
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import bcrypt
 import jwt
@@ -95,20 +96,13 @@ def _render_captcha_image(code: str) -> str:
             width=1,
         )
 
-    # 字体:优先 Windows / Linux 常见字体,失败则用默认
+    # 字体:优先项目内字体,再尝试系统字体
     font = None
+    project_font = Path(__file__).parent / "fonts" / "arialbd.ttf"
     font_candidates = [
-        # Windows
-        "C:/Windows/Fonts/arialbd.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-        "C:/Windows/Fonts/segoeui.ttf",
-        # Linux (Debian/Ubuntu/Alpine 常见路径)
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
+        str(project_font),                           # 项目内打包的字体
+        "C:/Windows/Fonts/arialbd.ttf",              # Windows
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux
     ]
     for path in font_candidates:
         try:
@@ -116,12 +110,13 @@ def _render_captcha_image(code: str) -> str:
             break
         except Exception:
             continue
+
+    # 所有路径都失败,用 Pillow 内置默认字体(兼容所有版本)
     if font is None:
-        # 使用 Pillow 内置的较大默认字体
         try:
-            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 28)
-        except Exception:
             font = ImageFont.load_default(size=28)
+        except TypeError:
+            font = ImageFont.load_default()
 
     # 逐字符绘制(带随机位移,增加辨识难度)
     for i, ch in enumerate(code):
