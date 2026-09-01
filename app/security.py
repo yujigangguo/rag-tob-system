@@ -58,14 +58,13 @@ def generate_captcha() -> tuple[str, str]:
 
     返回 (captcha_id, base64 data URL)。验证码有效期见配置。
     """
+    from app.redis_client import set_captcha
+    
     code = "".join(
         random.choices(string.ascii_uppercase + string.digits, k=settings.captcha_length)
     )
     captcha_id = f"cap_{int(time.time() * 1000)}_{random.randint(1000, 9999)}"
-    _captcha_store[captcha_id] = {
-        "code": code,
-        "expire": time.time() + settings.captcha_expire_seconds,
-    }
+    set_captcha(captcha_id, code, settings.captcha_expire_seconds)
     return captcha_id, _render_captcha_image(code)
 
 
@@ -73,12 +72,12 @@ def verify_captcha(captcha_id: str, code: str) -> bool:
     """校验验证码(一次性,校验后即失效)。"""
     if not settings.captcha_enabled:
         return True  # 测试/开发环境可关闭验证码
-    item = _captcha_store.pop(captcha_id, None)
-    if not item:
+    
+    from app.redis_client import get_captcha
+    stored_code = get_captcha(captcha_id)
+    if stored_code is None:
         return False
-    if time.time() > item["expire"]:
-        return False
-    return item["code"].upper() == (code or "").strip().upper()
+    return stored_code.upper() == (code or "").strip().upper()
 
 
 def _render_captcha_image(code: str) -> str:

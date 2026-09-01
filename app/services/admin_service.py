@@ -55,6 +55,7 @@ def get_users(
             "role": user.role,
             "department_id": user.department_id,
             "department_name": dept_name,
+            "is_active": user.is_active,
             "created_at": user.created_at.isoformat() if user.created_at else None,
         })
     
@@ -83,6 +84,7 @@ def get_user(db: Session, user_id: int) -> dict:
         "role": user.role,
         "department_id": user.department_id,
         "department_name": dept_name,
+        "is_active": user.is_active,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
@@ -169,6 +171,21 @@ def update_user_department(db: Session, user_id: int, department_id: Optional[in
     db.commit()
     db.refresh(user)
     logger.info("用户部门更新: id=%s username=%s department_id=%s", user.id, user.username, department_id)
+    
+    return get_user(db, user_id)
+
+
+def toggle_user_active(db: Session, user_id: int, is_active: bool) -> dict:
+    """禁用/启用用户。"""
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    user.is_active = is_active
+    db.commit()
+    db.refresh(user)
+    action = "启用" if is_active else "禁用"
+    logger.info("用户%s: id=%s username=%s", action, user.id, user.username)
     
     return get_user(db, user_id)
 

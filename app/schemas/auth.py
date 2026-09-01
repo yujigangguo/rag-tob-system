@@ -40,3 +40,14 @@ class UserOut(BaseModel):
     department_id: int | None
 
     model_config = {"from_attributes": True}
+
+
+class ChangePasswordRequest(BaseModel):
+    """修改密码请求。"""
+    old_password: str = Field(..., min_length=6, max_length=64, description="旧密码")
+    new_password: str = Field(..., min_length=6, max_length=64, description="新密码")
+
+
+class ResetPasswordRequest(BaseModel):
+    """管理员重置密码请求。"""
+    new_password: str = Field(..., min_length=6, max_length=64, description="新密码")

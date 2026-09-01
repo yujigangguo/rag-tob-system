@@ -11,7 +11,7 @@
 | 交互式文档 | Swagger UI `http://127.0.0.1:8000/docs`、ReDoc `/redoc` |
 | 启动命令 | `uv run uvicorn app.main:app --host 0.0.0.0 --port 8000` |
 
-> 权限说明:系统采用三级角色(`super_admin` / `dept_admin` / `employee`)+ 部门隔离,详见 `docs/使用说明.md`。接口标注「仅管理员」的仅 `super_admin` / `dept_admin`(本部门)可调用。
+> 权限说明:系统采用三级角色(`super_admin` / `dept_admin` / `employee`)+ 部门隔离,详见 `docs/使用说明.md`。接口标注「仅管理员」的仅 `super_admin` / `dept_admin`(本部门)可调用。标注「仅超管」的仅 `super_admin` 可调用。
 
 ---
 
@@ -27,7 +27,7 @@
 
 ### 2.2 注册
 
-**`POST /api/auth/register`** — 默认角色 `employee`
+**`POST /api/auth/register`** — 首个用户自动成为 `super_admin`，后续默认 `employee`
 
 ```json
 { "username": "zhangsan", "password": "abc123456", "confirm_password": "abc123456",
@@ -53,8 +53,30 @@
 **`GET /api/auth/me`**
 
 ```json
-{ "id": 2, "username": "zhangsan", "role": "employee", "department_id": 1, "department_name": "研发部" }
+{
+  "id": 2, "username": "zhangsan", "role": "employee",
+  "department_id": 1, "department_name": "研发部",
+  "nickname": "张三", "email": "zhangsan@example.com", "avatar_url": null
+}
 ```
+
+### 2.5 修改密码
+
+**`POST /api/auth/change-password`**
+
+```json
+{ "old_password": "abc123456", "new_password": "new123456" }
+```
+
+### 2.6 更新个人信息
+
+**`PUT /api/auth/profile`**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| nickname | string | 昵称 |
+| email | string | 邮箱 |
+| avatar_url | string | 头像URL(base64或链接) |
 
 ---
 
@@ -175,15 +197,214 @@ data: [DONE]
 
 ---
 
-## 7. 其他
+## 7. 系统接口
 
-**`GET /health`** — 存活探测
+### 7.1 基础健康检查
+
+**`GET /health`**
 
 ```json
 { "status": "ok" }
 ```
 
-## 8. 调用示例
+### 7.2 深度健康检查
+
+**`GET /health/deep`**
+
+```json
+{
+  "status": "ok",
+  "components": {
+    "mysql": { "status": "ok", "latency_ms": 2 },
+    "milvus": { "status": "ok", "latency_ms": 5 },
+    "redis": { "status": "ok", "latency_ms": 1 }
+  }
+}
+```
+
+### 7.3 接口限频说明
+
+| 接口 | 限频 | 说明 |
+|------|------|------|
+| POST /api/auth/login | 5次/分钟/IP | 防暴力破解 |
+| POST /api/auth/register | 3次/分钟/IP | 防刷注册 |
+| 其他接口 | 60次/分钟/IP | 通用限制 |
+
+超过限制返回 `429 Too Many Requests`。
+
+---
+
+## 8. 管理后台接口(需超级管理员)
+
+### 8.1 用户管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/admin/users` | 用户列表(分页/搜索/筛选) |
+| GET | `/api/admin/users/{id}` | 用户详情 |
+| PUT | `/api/admin/users/{id}` | 更新用户 |
+| DELETE | `/api/admin/users/{id}` | 删除用户 |
+| PUT | `/api/admin/users/{id}/role` | 分配角色 |
+| PUT | `/api/admin/users/{id}/department` | 分配部门 |
+| PUT | `/api/admin/users/{id}/status` | 禁用/启用用户 |
+| POST | `/api/admin/users/{id}/reset-password` | 重置密码 |
+
+**用户列表查询参数:**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| page | int | 页码(默认1) |
+| page_size | int | 每页数量(默认20) |
+| keyword | string | 搜索关键词(用户名/昵称) |
+| role | string | 角色筛选 |
+| is_active | bool | 状态筛选 |
+
+**分配角色请求:**
+
+```json
+{ "role": "dept_admin" }
+```
+
+**重置密码请求:**
+
+```json
+{ "new_password": "new123456" }
+```
+
+### 8.2 部门管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/admin/departments` | 部门列表(含用户数) |
+| POST | `/api/admin/departments` | 创建部门 |
+| PUT | `/api/admin/departments/{id}` | 更新部门 |
+| DELETE | `/api/admin/departments/{id}` | 删除部门 |
+
+### 8.3 权限管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/admin/roles` | 角色列表 |
+| GET | `/api/admin/permissions` | 权限配置 |
+
+**角色列表响应:**
+
+```json
+[
+  { "key": "super_admin", "name": "超级管理员", "description": "系统管理员，所有部门" },
+  { "key": "dept_admin", "name": "部门管理员", "description": "本部门管理员" },
+  { "key": "employee", "name": "普通员工", "description": "只读+问答" }
+]
+```
+
+### 8.4 系统配置
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/admin/configs` | 获取所有配置 |
+| PUT | `/api/admin/configs/{key}` | 更新配置 |
+
+**配置列表响应:**
+
+```json
+[
+  { "id": 1, "key": "llm_model", "value": "qwen-max", "description": "LLM 模型名称" },
+  { "id": 2, "key": "llm_temperature", "value": "0.7", "description": "LLM 温度参数" },
+  { "id": 3, "key": "retrieval_top_k", "value": "20", "description": "检索召回数量" }
+]
+```
+
+### 8.5 审计日志
+
+**`GET /api/admin/audit-logs`**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| page | int | 页码 |
+| page_size | int | 每页数量 |
+| action | string | 操作类型筛选 |
+| username | string | 操作人筛选 |
+
+**响应:**
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "username": "admin",
+      "action": "update_role",
+      "target_type": "user",
+      "target_id": 5,
+      "target_name": "zhangsan",
+      "detail": "角色改为 dept_admin",
+      "ip_address": "127.0.0.1",
+      "created_at": "2024-01-01T12:00:00"
+    }
+  ],
+  "total": 100,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+### 8.6 仪表盘统计
+
+**`GET /api/admin/dashboard`**
+
+```json
+{
+  "users": {
+    "total": 100,
+    "active": 95,
+    "new_this_week": 10
+  },
+  "knowledge_bases": {
+    "total": 20
+  },
+  "documents": {
+    "total": 500
+  },
+  "conversations": {
+    "sessions": 1000,
+    "messages": 5000
+  }
+}
+```
+
+---
+
+## 9. 对话高级接口
+
+### 9.1 重新生成
+
+**`POST /api/chat/regenerate`**
+
+删除最后一条助手消息并返回用户问题，前端可重新发送。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| session_id | int | 会话ID |
+
+**响应:**
+
+```json
+{
+  "session_id": 3,
+  "question": "年假有几天?",
+  "message": "已删除最后一条回复，请重新提问"
+}
+```
+
+### 9.2 删除消息
+
+**`DELETE /api/chat/messages/{message_id}`**
+
+删除指定消息及其后续消息。
+
+---
+
+## 10. 调用示例
 
 ```bash
 # 1. 登录拿 token
@@ -198,6 +419,15 @@ curl.exe -X POST http://127.0.0.1:8000/api/knowledge-bases -H "Authorization: Be
 # 3. 流式问答
 curl.exe -N -X POST http://127.0.0.1:8000/api/chat/stream -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" -d "{\"question\":\"年假有几天?\",\"kb_ids\":[6]}"
+
+# 4. 获取管理后台仪表盘
+curl.exe http://127.0.0.1:8000/api/admin/dashboard -H "Authorization: Bearer <token>"
+
+# 5. 获取审计日志
+curl.exe "http://127.0.0.1:8000/api/admin/audit-logs?page=1&page_size=10" -H "Authorization: Bearer <token>"
+
+# 6. 深度健康检查
+curl.exe http://127.0.0.1:8000/health/deep
 ```
 
 > 编码注意:Windows PowerShell 5.1 的 `Invoke-RestMethod` 对中文有 GBK 编码坑,建议用 `curl.exe`、Python `httpx` 或浏览器 `/docs`。

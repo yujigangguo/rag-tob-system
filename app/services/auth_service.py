@@ -41,6 +41,8 @@ def login(db: Session, req: LoginRequest) -> dict:
     user = db.scalar(select(User).where(User.username == req.username))
     if user is None or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=400, detail="账号或密码错误")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员")
     token = create_access_token(user.id, user.username)
     dept_name = None
     if user.department_id is not None:

@@ -14,6 +14,7 @@ class UserOut(BaseModel):
     role: str
     department_id: Optional[int] = None
     department_name: Optional[str] = None
+    is_active: bool = True
     created_at: Optional[datetime] = None
 
 
@@ -76,3 +77,8 @@ class PermissionOut(BaseModel):
 class MessageResponse(BaseModel):
     """通用消息响应模型。"""
     message: str
+
+
+class ResetPasswordRequest(BaseModel):
+    """管理员重置密码请求。"""
+    new_password: str = Field(..., min_length=6, max_length=64, description="新密码")

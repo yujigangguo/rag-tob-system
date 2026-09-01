@@ -33,8 +33,10 @@
         <div class="header-title">{{ route.meta.title || '企业知识问答系统' }}</div>
         <el-dropdown @command="onCommand">
           <span class="user">
-            <el-avatar :size="30" class="avatar">{{ authStore.username.charAt(0).toUpperCase() }}</el-avatar>
-            <span class="username">{{ authStore.username }}</span>
+            <el-avatar :size="30" class="avatar" :src="authStore.avatarUrl || undefined">
+              {{ authStore.displayName.charAt(0).toUpperCase() }}
+            </el-avatar>
+            <span class="username">{{ authStore.displayName }}</span>
             <el-tag v-if="authStore.isSuperAdmin" size="small" type="danger" class="role-tag">系统管理员</el-tag>
             <el-tag v-else-if="authStore.role === 'dept_admin'" size="small" type="warning" class="role-tag">部门管理员</el-tag>
             <el-icon><ArrowDown /></el-icon>

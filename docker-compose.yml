@@ -99,6 +99,8 @@ services:
         condition: service_healthy
       milvus:
         condition: service_started
+      redis:
+        condition: service_started
     environment:
       DB_HOST: mysql
       DB_PORT: 3306
@@ -115,6 +117,10 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v3}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production-please}
+      # 数据库迁移:设为 true 时启动前自动运行 alembic upgrade head
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-false}
+      # Redis 缓存(验证码等)
+      REDIS_URL: redis://:1234@redis:6379/0
     ports:
       - "8000:8000"
     volumes:

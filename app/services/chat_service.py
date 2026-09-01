@@ -244,3 +244,61 @@ def stream_answer(
     finally:
         db.close()
     logger.info("问答生成完成: session=%s 长度=%s 字符", session_id, len("".join(full)))
+
+
+def regenerate_last_answer(db: Session, user_id: int, session_id: int) -> dict:
+    """删除最后一条助手消息并重新生成。"""
+    # 验证会话归属
+    _get_session(db, user_id, session_id)
+    
+    # 获取最后一条消息
+    last_msg = db.scalars(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.id.desc())
+        .limit(1)
+    ).first()
+    
+    if not last_msg or last_msg.role != "assistant":
+        raise HTTPException(status_code=400, detail="最后一条消息不是助手回复")
+    
+    # 删除最后一条助手消息
+    db.delete(last_msg)
+    db.commit()
+    
+    # 获取倒数第二条（用户问题）
+    user_msg = db.scalars(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.id.desc())
+        .limit(1)
+    ).first()
+    
+    if not user_msg or user_msg.role != "user":
+        raise HTTPException(status_code=400, detail="找不到用户问题")
+    
+    return {
+        "session_id": session_id,
+        "question": user_msg.content,
+        "message": "已删除最后一条回复，请重新提问"
+    }
+
+
+def delete_message(db: Session, user_id: int, message_id: int) -> None:
+    """删除指定消息及其后续消息。"""
+    msg = db.get(ChatMessage, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="消息不存在")
+    
+    # 验证会话归属
+    _get_session(db, user_id, msg.session_id)
+    
+    # 删除该消息及后续消息
+    db.execute(
+        delete(ChatMessage).where(
+            ChatMessage.session_id == msg.session_id,
+            ChatMessage.id >= message_id,
+        )
+    )
+    db.commit()
+    logger.info("消息已删除: id=%s 及后续消息", message_id)

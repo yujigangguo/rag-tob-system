@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
+from app.logging_config import get_logger
 from app.models import User
 from app.rbac import ROLE_SUPER_ADMIN, ROLE_DEPT_ADMIN
 from app.schemas.admin import (
@@ -16,6 +17,7 @@ from app.schemas.admin import (
     DepartmentUpdateRequest,
     MessageResponse,
     PermissionOut,
+    ResetPasswordRequest,
     RoleOut,
     UserDepartmentRequest,
     UserListResponse,
@@ -26,6 +28,8 @@ from app.schemas.admin import (
 from app.services import admin_service
 
 router = APIRouter(prefix="/admin", tags=["管理后台"])
+
+logger = get_logger(__name__)
 
 
 def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
@@ -137,6 +141,7 @@ def delete_user(
 def update_user_role(
     user_id: int,
     req: UserRoleRequest,
+    request: Request,
     current_user: User = Depends(require_super_admin),
     db: Session = Depends(get_db),
 ):
@@ -144,7 +149,14 @@ def update_user_role(
     
     权限要求：超级管理员
     """
-    return admin_service.update_user_role(db, user_id, req.role)
+    from app.services.audit_service import log_action
+    result = admin_service.update_user_role(db, user_id, req.role)
+    log_action(
+        db, current_user.id, current_user.username,
+        "update_role", "user", user_id, result.get("username"),
+        f"角色改为 {req.role}", request.client.host if request.client else None
+    )
+    return result
 
 
 @router.put("/users/{user_id}/department", response_model=UserOut, summary="分配用户部门")
@@ -159,6 +171,47 @@ def update_user_department(
     权限要求：超级管理员
     """
     return admin_service.update_user_department(db, user_id, req.department_id)
+
+
+@router.put("/users/{user_id}/status", response_model=UserOut, summary="禁用/启用用户")
+def toggle_user_status(
+    user_id: int,
+    is_active: bool = Query(..., description="true=启用, false=禁用"),
+    current_user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """禁用或启用用户。
+    
+    权限要求：超级管理员
+    """
+    # 不能禁用自己
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能禁用当前登录用户")
+    
+    return admin_service.toggle_user_active(db, user_id, is_active)
+
+
+@router.post("/users/{user_id}/reset-password", response_model=MessageResponse, summary="重置用户密码")
+def reset_user_password(
+    user_id: int,
+    req: ResetPasswordRequest,
+    current_user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """管理员重置用户密码。
+    
+    权限要求：超级管理员
+    """
+    from app.security import hash_password
+    
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    user.password_hash = hash_password(req.new_password)
+    db.commit()
+    logger.info("管理员重置密码: admin=%s target=%s", current_user.username, user.username)
+    return {"message": f"用户 {user.username} 密码已重置"}
 
 
 # ==================== 部门管理 ====================
@@ -237,3 +290,104 @@ def get_permissions(
     权限要求：管理员（超级管理员或部门管理员）
     """
     return admin_service.get_permissions()
+
+
+# ==================== 审计日志 ====================
+
+@router.get("/audit-logs", summary="获取审计日志")
+def get_audit_logs(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(50, ge=1, le=200, description="每页数量"),
+    action: Optional[str] = Query(None, description="操作类型筛选"),
+    username: Optional[str] = Query(None, description="操作人筛选"),
+    current_user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """获取审计日志列表。
+    
+    权限要求：超级管理员
+    """
+    from app.services.audit_service import get_audit_logs
+    return get_audit_logs(db, page, page_size, action, username)
+
+
+# ==================== 系统配置 ====================
+
+@router.get("/configs", summary="获取所有系统配置")
+def get_system_configs(
+    current_user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """获取所有系统配置。
+    
+    权限要求：超级管理员
+    """
+    from app.services.config_service import get_all_configs
+    return get_all_configs(db)
+
+
+@router.put("/configs/{key}", summary="更新系统配置")
+def update_system_config(
+    key: str,
+    value: str = Query(..., description="配置值"),
+    current_user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """更新系统配置。
+    
+    权限要求：超级管理员
+    """
+    from app.services.config_service import update_config
+    return update_config(db, key, value)
+
+
+# ==================== 仪表盘统计 ====================
+
+@router.get("/dashboard", summary="获取仪表盘统计数据")
+def get_dashboard_stats(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """获取管理后台仪表盘统计数据。
+    
+    权限要求：管理员
+    """
+    from sqlalchemy import func
+    
+    # 用户统计
+    total_users = db.scalar(select(func.count()).select_from(User))
+    active_users = db.scalar(select(func.count()).where(User.is_active == True))
+    
+    # 知识库统计
+    from app.models import KnowledgeBase, Document, ChatSession, ChatMessage
+    total_kbs = db.scalar(select(func.count()).select_from(KnowledgeBase))
+    total_docs = db.scalar(select(func.count()).select_from(Document))
+    
+    # 对话统计
+    total_sessions = db.scalar(select(func.count()).select_from(ChatSession))
+    total_messages = db.scalar(select(func.count()).select_from(ChatMessage))
+    
+    # 最近7天注册用户
+    from datetime import datetime, timedelta
+    week_ago = datetime.now() - timedelta(days=7)
+    new_users_week = db.scalar(
+        select(func.count()).where(User.created_at >= week_ago)
+    )
+    
+    return {
+        "users": {
+            "total": total_users,
+            "active": active_users,
+            "new_this_week": new_users_week,
+        },
+        "knowledge_bases": {
+            "total": total_kbs,
+        },
+        "documents": {
+            "total": total_docs,
+        },
+        "conversations": {
+            "sessions": total_sessions,
+            "messages": total_messages,
+        },
+    }

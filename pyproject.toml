@@ -42,6 +42,12 @@ dependencies = [
     "pillow>=12.3.0",
     "python-multipart>=0.0.32",
     "python-pptx>=1.0.2",
+    # ===== 数据库迁移 =====
+    "alembic>=1.14.0",
+    # ===== 接口限频 =====
+    "slowapi>=0.1.9",
+    # ===== Redis =====
+    "redis>=5.0.0",
 ]
 
 [dependency-groups]

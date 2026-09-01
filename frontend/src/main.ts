@@ -26,7 +26,15 @@ async function syncCurrentUser() {
   if (!localStorage.getItem('token')) return
   try {
     const me = await getMe()
-    useAuthStore().syncUser(me.username, me.role, me.department_id, me.department_name)
+    useAuthStore().syncUser({
+      username: me.username,
+      role: me.role,
+      departmentId: me.department_id,
+      departmentName: me.department_name,
+      nickname: me.nickname,
+      email: me.email,
+      avatarUrl: me.avatar_url,
+    })
   } catch {
     // 401 由 axios 拦截器统一处理(清除 token 并跳转登录页)
   }

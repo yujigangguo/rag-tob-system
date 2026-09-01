@@ -77,3 +77,31 @@ def stream_chat(req: ChatRequest, user: User = Depends(get_current_user),
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.post("/regenerate", summary="重新生成最后一条回答")
+def regenerate_last_answer(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """删除最后一条助手消息并重新生成。
+    
+    权限要求：登录用户
+    """
+    result = chat_service.regenerate_last_answer(db, user.id, session_id)
+    return result
+
+
+@router.delete("/messages/{message_id}", summary="删除消息")
+def delete_message(
+    message_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """删除指定消息及其后续消息。
+    
+    权限要求：登录用户
+    """
+    chat_service.delete_message(db, user.id, message_id)
+    return {"message": "删除成功"}

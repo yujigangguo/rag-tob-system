@@ -6,10 +6,14 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends fonts-dejavu-core libglib2.0-0 && \
     rm -rf /var/lib/apt/lists/*
 
-# 安装 uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# 安装 uv (使用国内镜像)
+RUN pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /app
+
+# 配置 uv 镜像源(国内加速)
+ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV UV_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
 # 先复制依赖清单,利用构建缓存
 COPY pyproject.toml uv.lock ./
@@ -19,8 +23,12 @@ RUN uv sync --frozen --no-dev --no-cache
 COPY app/ app/
 COPY config/ config/
 COPY data/ data/
+COPY alembic/ alembic/
+COPY alembic.ini ./
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
 
-# 启动时自动建表并运行服务
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 启动入口(支持数据库迁移)
+ENTRYPOINT ["/entrypoint.sh"]

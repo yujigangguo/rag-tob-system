@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -21,4 +21,9 @@ class User(Base):
     department_id: Mapped[int | None] = mapped_column(
         ForeignKey("departments.id"), nullable=True, index=True
     )
+    # 个人信息
+    nickname: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 昵称
+    email: Mapped[str | None] = mapped_column(String(128), nullable=True)    # 邮箱
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)      # 头像URL(base64或链接)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # 账号是否启用
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

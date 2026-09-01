@@ -61,6 +61,13 @@
             {{ row.department_name || '未分配' }}
           </template>
         </el-table-column>
+        <el-table-column prop="is_active" label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.is_active ? 'success' : 'danger'">
+              {{ row.is_active ? '正常' : '已禁用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="180">
           <template #default="{ row }">
             {{ formatDate(row.created_at) }}
@@ -77,6 +84,13 @@
             </el-button>
             <el-button size="small" type="danger" @click="handleDelete(row)">
               删除
+            </el-button>
+            <el-button 
+              size="small" 
+              :type="row.is_active ? 'warning' : 'success'" 
+              @click="handleToggleStatus(row)"
+            >
+              {{ row.is_active ? '禁用' : '启用' }}
             </el-button>
           </template>
         </el-table-column>
@@ -190,12 +204,19 @@ import {
   getDepartments,
 } from '@/api'
 
+// 定义 API 函数（如果 api/index.ts 中没有）
+const updateUserStatus = (userId: number, isActive: boolean) => {
+  const http = import('@/api').then(m => m.default)
+  return http.then(h => h.put(`/admin/users/${userId}/status`, null, { params: { is_active: isActive } }))
+}
+
 interface User {
   id: number
   username: string
   role: string
   department_id: number | null
   department_name: string | null
+  is_active: boolean
   created_at: string
 }
 
@@ -415,6 +436,30 @@ const handleDelete = async (user: User) => {
   } catch (error) {
     if (error !== 'cancel') {
       console.error('删除用户失败:', error)
+    }
+  }
+}
+
+// 禁用/启用用户
+const handleToggleStatus = async (user: User) => {
+  const action = user.is_active ? '禁用' : '启用'
+  try {
+    await ElMessageBox.confirm(
+      `确定要${action}用户 "${user.username}" 吗？`,
+      `确认${action}`,
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    )
+    
+    await updateUserStatus(user.id, !user.is_active)
+    ElMessage.success(`用户${action}成功`)
+    fetchUsers()
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error(`${action}用户失败:`, error)
     }
   }
 }
