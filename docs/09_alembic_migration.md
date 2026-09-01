@@ -14,6 +14,13 @@
 | `docker-compose.yml` | 修改 | 添加 `RUN_MIGRATIONS` 环境变量 |
 | `app/main.py` | 修改 | 自动建表改为环境变量控制 |
 
+## 当前状态(2026-09-01)
+
+- ✅ 基线迁移已生成:`alembic/versions/2026_09_01_1418_936b96e574aa_baseline.py`
+- ✅ 当前数据库已 `upgrade head` 到 `936b96e574aa`
+- ✅ `alembic/env.py` 已加项目根目录路径引导,宿主/容器任意目录均可直接运行
+- 以后模型变更流程:改模型 → `uv run alembic revision --autogenerate -m "描述"` → 审查生成的脚本 → `uv run alembic upgrade head`
+
 ## 使用方式
 
 ### 开发环境（保持原有行为）
@@ -82,7 +89,7 @@ alembic history --verbose
 
 ## 注意事项
 
-1. **首次部署**：需要先运行 `alembic revision --autogenerate -m "initial"` 生成初始迁移
+1. **基线迁移已就绪**:`alembic/versions/` 下已有 baseline 迁移,新环境部署直接 `alembic upgrade head` 即可,无需再生成初始迁移
 2. **生产环境**：建议设置 `AUTO_CREATE_TABLES=false`，只使用 Alembic 管理表结构
 3. **多实例部署**：确保只有一个实例运行迁移，其他实例等待迁移完成后再启动
 4. **备份**：生产环境执行迁移前建议先备份数据库

@@ -2,10 +2,19 @@
 
 从 config.settings 读取数据库连接串,自动导入所有 ORM 模型。
 """
+import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+# 项目根目录加入 sys.path,保证任意工作目录下都能 import app / config
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+os.environ.setdefault("PYTHONPATH", str(PROJECT_ROOT))
 
 from app.database import Base
 from config.settings import settings
