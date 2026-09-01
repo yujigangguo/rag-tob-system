@@ -35,3 +35,45 @@ http.interceptors.response.use(
 )
 
 export default http
+
+// ==================== 管理后台 API ====================
+
+// 用户管理
+export const getUsers = (params: {
+  page?: number
+  page_size?: number
+  search?: string
+  role?: string
+  department_id?: number
+}) => http.get('/admin/users', { params })
+
+export const getUser = (userId: number) => http.get(`/admin/users/${userId}`)
+
+export const updateUser = (userId: number, data: {
+  username?: string
+  role?: string
+  department_id?: number
+}) => http.put(`/admin/users/${userId}`, data)
+
+export const deleteUser = (userId: number) => http.delete(`/admin/users/${userId}`)
+
+export const updateUserRole = (userId: number, role: string) => 
+  http.put(`/admin/users/${userId}/role`, { role })
+
+export const updateUserDepartment = (userId: number, departmentId: number | null) => 
+  http.put(`/admin/users/${userId}/department`, { department_id: departmentId })
+
+// 部门管理
+export const getDepartments = () => http.get('/admin/departments')
+
+export const createDepartment = (name: string) => http.post('/admin/departments', { name })
+
+export const updateDepartment = (departmentId: number, name: string) => 
+  http.put(`/admin/departments/${departmentId}`, { name })
+
+export const deleteDepartment = (departmentId: number) => http.delete(`/admin/departments/${departmentId}`)
+
+// 权限管理
+export const getRoles = () => http.get('/admin/roles')
+
+export const getPermissions = () => http.get('/admin/permissions')

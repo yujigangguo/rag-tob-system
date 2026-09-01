@@ -1,9 +1,9 @@
 <template>
-  <el-container class="layout">
+  <el-container class="admin-layout">
     <el-aside width="220px" class="aside">
       <div class="logo">
         <span class="logo-dot"></span>
-        知识问答系统
+        管理后台
       </div>
       <el-menu
         :default-active="activeMenu"
@@ -13,30 +13,34 @@
         text-color="#aab2c5"
         active-text-color="#ffffff"
       >
-        <el-menu-item index="/chat">
-          <el-icon><ChatDotRound /></el-icon>
-          <span>对话</span>
+        <el-menu-item index="/admin/users">
+          <el-icon><User /></el-icon>
+          <span>用户管理</span>
         </el-menu-item>
-        <el-menu-item index="/knowledge">
-          <el-icon><FolderOpened /></el-icon>
-          <span>知识库</span>
+        <el-menu-item index="/admin/departments">
+          <el-icon><OfficeBuilding /></el-icon>
+          <span>部门管理</span>
         </el-menu-item>
-        <el-menu-item v-if="authStore.isSuperAdmin" index="/admin">
-          <el-icon><Setting /></el-icon>
-          <span>管理后台</span>
+        <el-menu-item index="/admin/permissions">
+          <el-icon><Lock /></el-icon>
+          <span>权限管理</span>
+        </el-menu-item>
+        <el-divider />
+        <el-menu-item index="/">
+          <el-icon><Back /></el-icon>
+          <span>返回主系统</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
 
     <el-container>
       <el-header class="header">
-        <div class="header-title">{{ route.meta.title || '企业知识问答系统' }}</div>
+        <div class="header-title">{{ route.meta.title || '管理后台' }}</div>
         <el-dropdown @command="onCommand">
           <span class="user">
             <el-avatar :size="30" class="avatar">{{ authStore.username.charAt(0).toUpperCase() }}</el-avatar>
             <span class="username">{{ authStore.username }}</span>
-            <el-tag v-if="authStore.isSuperAdmin" size="small" type="danger" class="role-tag">系统管理员</el-tag>
-            <el-tag v-else-if="authStore.role === 'dept_admin'" size="small" type="warning" class="role-tag">部门管理员</el-tag>
+            <el-tag size="small" type="danger" class="role-tag">超级管理员</el-tag>
             <el-icon><ArrowDown /></el-icon>
           </span>
           <template #dropdown>
@@ -60,6 +64,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { User, OfficeBuilding, Lock, Back, ArrowDown } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -76,7 +81,7 @@ function onCommand(cmd: string) {
 </script>
 
 <style scoped>
-.layout {
+.admin-layout {
   height: 100vh;
 }
 .aside {
@@ -98,8 +103,8 @@ function onCommand(cmd: string) {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #4f6ef7, #7b5cf0);
-  box-shadow: 0 0 12px rgba(79, 110, 247, 0.8);
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
+  box-shadow: 0 0 12px rgba(231, 76, 60, 0.8);
 }
 .menu {
   border-right: none;
@@ -110,7 +115,7 @@ function onCommand(cmd: string) {
   margin-bottom: 6px;
 }
 .menu :deep(.el-menu-item.is-active) {
-  background: linear-gradient(135deg, #4f6ef7, #7b5cf0);
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
 }
 .header {
   background: #fff;
@@ -131,7 +136,7 @@ function onCommand(cmd: string) {
   outline: none;
 }
 .avatar {
-  background: linear-gradient(135deg, #4f6ef7, #7b5cf0);
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
 }
 .username {
   font-size: 14px;

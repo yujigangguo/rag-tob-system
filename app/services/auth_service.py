@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.logging_config import get_logger
@@ -22,11 +22,15 @@ def register(db: Session, req: RegisterRequest) -> User:
     exists = db.scalar(select(User).where(User.username == req.username))
     if exists is not None:
         raise HTTPException(status_code=400, detail="该账号名称已被注册")
-    user = User(username=req.username, password_hash=hash_password(req.password), role="employee")
+    # 检查是否是第一个用户，如果是则自动成为超级管理员
+    user_count = db.scalar(select(func.count()).select_from(User))
+    role = "super_admin" if user_count == 0 else "employee"
+    
+    user = User(username=req.username, password_hash=hash_password(req.password), role=role)
     db.add(user)
     db.commit()
     db.refresh(user)
-    logger.info("用户注册成功: id=%s username=%s", user.id, user.username)
+    logger.info("用户注册成功: id=%s username=%s 角色=%s", user.id, user.username, user.role)
     return user
 
 

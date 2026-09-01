@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import models  # noqa: F401  确保 ORM 模型注册
-from app.api import auth, chat, department, document, knowledge_base
+from app.api import admin, auth, chat, department, document, knowledge_base
 from app.database import Base, engine
 from app.logging_config import get_logger, setup_logging
 from config.settings import settings
@@ -52,6 +52,7 @@ app.include_router(document.documents_router, prefix=settings.api_prefix)
 app.include_router(document.chunks_router, prefix=settings.api_prefix)
 app.include_router(department.router, prefix=settings.api_prefix)
 app.include_router(chat.router, prefix=settings.api_prefix)
+app.include_router(admin.router, prefix=settings.api_prefix)
 
 
 @app.get("/health", tags=["系统"])
