@@ -95,16 +95,33 @@ def _render_captcha_image(code: str) -> str:
             width=1,
         )
 
-    # 字体:优先 Windows 系统字体,失败则用默认
+    # 字体:优先 Windows / Linux 常见字体,失败则用默认
     font = None
-    for path in ("C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/arial.ttf"):
+    font_candidates = [
+        # Windows
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+        # Linux (Debian/Ubuntu/Alpine 常见路径)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
+    ]
+    for path in font_candidates:
         try:
             font = ImageFont.truetype(path, 28)
             break
         except Exception:
             continue
     if font is None:
-        font = ImageFont.load_default()
+        # 使用 Pillow 内置的较大默认字体
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 28)
+        except Exception:
+            font = ImageFont.load_default(size=28)
 
     # 逐字符绘制(带随机位移,增加辨识难度)
     for i, ch in enumerate(code):
