@@ -20,7 +20,9 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="rename">重命名</el-dropdown-item>
-                <el-dropdown-item command="delete">删除</el-dropdown-item>
+                <el-dropdown-item command="export_md">导出 Markdown</el-dropdown-item>
+                <el-dropdown-item command="export_json">导出 JSON</el-dropdown-item>
+                <el-dropdown-item divided command="delete">删除</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -33,11 +35,25 @@
       <div class="message-area" ref="messageArea">
         <div v-if="messages.length === 0" class="empty">
           <div class="empty-icon">💬</div>
-          <p>开始你的第一次提问吧</p>
+          <h3>开始你的第一次提问吧</h3>
+          <p>选择知识库，输入问题即可获得智能回答</p>
+          <div class="shortcuts">
+            <div class="shortcut-item">
+              <kbd>Enter</kbd>
+              <span>发送消息</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Shift + Enter</kbd>
+              <span>换行</span>
+            </div>
+          </div>
         </div>
         <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
           <template v-if="m.role === 'user'">
-            <div class="bubble">{{ m.content }}</div>
+            <div class="bubble-wrapper">
+              <div class="bubble">{{ m.content }}</div>
+              <div class="msg-time">{{ formatTime(m.created_at) }}</div>
+            </div>
           </template>
           <template v-else>
             <div class="assistant-block">
@@ -53,46 +69,89 @@
                   >[{{ seg.text }}]</a>
                 </template>
               </div>
-              <div v-if="m.kb_ids && m.kb_ids.length" class="msg-source">
-                🔍 检索:{{ kbNames(m.kb_ids) }}
+              <div class="msg-footer">
+                <div v-if="m.kb_ids && m.kb_ids.length" class="msg-source">
+                  <el-icon><Search /></el-icon>
+                  <span>检索: {{ kbNames(m.kb_ids) }}</span>
+                </div>
+                <div class="msg-time">{{ formatTime(m.created_at) }}</div>
               </div>
             </div>
           </template>
         </div>
         <div v-if="streaming" class="msg assistant">
-          <div class="bubble typing"><span class="cursor"></span></div>
+          <div class="assistant-block">
+            <div class="bubble typing">
+              <span class="cursor"></span>
+              <span class="typing-text">正在思考...</span>
+            </div>
+          </div>
         </div>
       </div>
       <div class="input-area">
-        <el-input
-          v-model="question"
-          type="textarea"
-          :rows="3"
-          placeholder="输入你的问题,Enter 发送,Shift+Enter 换行"
-          @keydown.enter.exact.prevent="send"
-        />
-        <div class="input-actions">
-          <span class="hint">已选 {{ selectedKbIds.length }} 个知识库</span>
-          <el-button type="primary" class="gradient-btn" :loading="streaming" :icon="Promotion" @click="send">
-            发送
-          </el-button>
+        <div class="input-wrapper">
+          <el-input
+            v-model="question"
+            type="textarea"
+            :rows="3"
+            placeholder="输入你的问题..."
+            @keydown.enter.exact.prevent="send"
+            @keydown.shift.enter="newline"
+          />
+          <div class="input-actions">
+            <div class="input-hints">
+              <span class="hint">
+                <el-icon><InfoFilled /></el-icon>
+                已选 {{ selectedKbIds.length }} 个知识库
+              </span>
+              <span class="shortcut-hint">
+                <kbd>Enter</kbd> 发送 · <kbd>Shift+Enter</kbd> 换行
+              </span>
+            </div>
+            <el-button 
+              type="primary" 
+              class="gradient-btn send-btn" 
+              :loading="streaming" 
+              :icon="Promotion" 
+              @click="send"
+              :disabled="!question.trim() || selectedKbIds.length === 0"
+            >
+              发送
+            </el-button>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- 右侧参数面板 -->
     <div class="param-panel">
-      <div class="param-title">参数设置</div>
+      <div class="param-title">
+        <el-icon><Setting /></el-icon>
+        <span>参数设置</span>
+      </div>
 
       <div class="param-block">
-        <label>知识库(可多选)</label>
-        <el-select v-model="selectedKbIds" multiple placeholder="选择知识库" style="width: 100%">
+        <label>
+          <el-icon><FolderOpened /></el-icon>
+          知识库 (可多选)
+        </label>
+        <el-select 
+          v-model="selectedKbIds" 
+          multiple 
+          placeholder="选择知识库" 
+          style="width: 100%"
+          collapse-tags
+          collapse-tags-tooltip
+        >
           <el-option v-for="kb in kbs" :key="kb.id" :label="kb.name" :value="kb.id" />
         </el-select>
       </div>
 
       <div class="param-block">
-        <label>大模型</label>
+        <label>
+          <el-icon><Cpu /></el-icon>
+          大模型
+        </label>
         <el-select v-model="params.model" style="width: 100%">
           <el-option label="qwen-max" value="qwen-max" />
           <el-option label="qwen-plus" value="qwen-plus" />
@@ -101,23 +160,50 @@
       </div>
 
       <div class="param-block">
-        <label>温度 temperature:{{ params.temperature.toFixed(2) }}</label>
-        <el-slider v-model="params.temperature" :min="0" :max="2" :step="0.05" />
+        <label>
+          <el-icon><Operation /></el-icon>
+          温度: {{ params.temperature.toFixed(2) }}
+        </label>
+        <el-slider v-model="params.temperature" :min="0" :max="2" :step="0.05" :show-tooltip="false" />
+        <div class="slider-marks">
+          <span>精确</span>
+          <span>平衡</span>
+          <span>创意</span>
+        </div>
       </div>
 
       <div class="param-block">
-        <label>Top P:{{ params.top_p.toFixed(2) }}</label>
-        <el-slider v-model="params.top_p" :min="0" :max="1" :step="0.05" />
+        <label>
+          <el-icon><Filter /></el-icon>
+          Top P: {{ params.top_p.toFixed(2) }}
+        </label>
+        <el-slider v-model="params.top_p" :min="0" :max="1" :step="0.05" :show-tooltip="false" />
       </div>
 
       <div class="param-block">
-        <label>最长输出 token 数</label>
+        <label>
+          <el-icon><Document /></el-icon>
+          最长输出 token 数
+        </label>
         <el-input-number v-model="params.max_tokens" :min="64" :max="8192" :step="256" style="width: 100%" />
       </div>
 
       <div class="param-block">
-        <label>历史对话轮数</label>
+        <label>
+          <el-icon><ChatDotRound /></el-icon>
+          历史对话轮数
+        </label>
         <el-input-number v-model="params.history_rounds" :min="0" :max="20" style="width: 100%" />
+      </div>
+
+      <div class="param-tips">
+        <el-divider />
+        <h4>💡 使用提示</h4>
+        <ul>
+          <li>选择相关知识库可获得更精准的回答</li>
+          <li>温度越低，回答越精确；越高越有创意</li>
+          <li>点击引用 <span class="cite-example">[1]</span> 可查看原文</li>
+        </ul>
       </div>
     </div>
   </div>
@@ -127,11 +213,26 @@
 import { nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Promotion, ChatLineRound, MoreFilled } from '@element-plus/icons-vue'
+import { 
+  Plus, 
+  Promotion, 
+  ChatLineRound, 
+  MoreFilled,
+  Search,
+  InfoFilled,
+  Setting,
+  FolderOpened,
+  Cpu,
+  Operation,
+  Filter,
+  Document,
+  ChatDotRound
+} from '@element-plus/icons-vue'
 import { listKnowledgeBases } from '@/api/knowledgeBase'
 import {
   createSession,
   deleteSession,
+  exportSession,
   listMessages,
   listSessions,
   renameSession,
@@ -230,6 +331,10 @@ function onSessionCmd(cmd: string, s: ChatSession) {
       await renameSession(s.id, value)
       await loadSessions()
     })
+  } else if (cmd === 'export_md') {
+    handleExport(s.id, 'markdown')
+  } else if (cmd === 'export_json') {
+    handleExport(s.id, 'json')
   } else if (cmd === 'delete') {
     ElMessageBox.confirm('确定删除该会话吗?', '提示', { type: 'warning' }).then(async () => {
       await deleteSession(s.id)
@@ -242,6 +347,15 @@ function onSessionCmd(cmd: string, s: ChatSession) {
   }
 }
 
+async function handleExport(sessionId: number, format: 'markdown' | 'json') {
+  try {
+    await exportSession(sessionId, format)
+    ElMessage.success('导出成功')
+  } catch (error: any) {
+    ElMessage.error(error.message || '导出失败')
+  }
+}
+
 async function send() {
   const q = question.value.trim()
   if (!q) return
@@ -250,7 +364,7 @@ async function send() {
     return
   }
   question.value = ''
-  messages.value.push({ id: 0, session_id: 0, role: 'user', content: q, created_at: '' })
+  messages.value.push({ id: 0, session_id: 0, role: 'user', content: q, created_at: new Date().toISOString() })
   messages.value.push({ id: 0, session_id: 0, role: 'assistant', content: '', created_at: '' })
   streaming.value = true
   scrollBottom()
@@ -281,6 +395,33 @@ async function send() {
   } finally {
     streaming.value = false
   }
+}
+
+// 换行
+function newline() {
+  question.value += '\n'
+}
+
+// 格式化时间
+function formatTime(dateStr: string): string {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  
+  // 今天内只显示时间
+  if (diff < 86400000 && date.getDate() === now.getDate()) {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  }
+  
+  // 今年内显示月日时间
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) + ' ' + 
+           date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  }
+  
+  // 其他显示完整日期
+  return date.toLocaleDateString('zh-CN')
 }
 
 // 把回答拆成普通文本段 + 可点击引用段([N])
@@ -325,174 +466,461 @@ function scrollBottom() {
   height: calc(100vh - 100px);
   gap: 16px;
 }
+
+/* 会话面板 */
 .session-panel {
-  width: 220px;
-  background: #fff;
-  border-radius: 14px;
-  padding: 14px;
+  width: 240px;
+  background: var(--bg-primary);
+  border-radius: var(--radius-lg);
+  padding: 16px;
   display: flex;
   flex-direction: column;
+  box-shadow: var(--shadow-sm);
 }
+
 .new-session {
   width: 100%;
+  height: 44px;
+  font-size: 14px;
 }
+
 .session-list {
-  margin-top: 12px;
+  margin-top: 16px;
   overflow: auto;
   flex: 1;
 }
+
 .session-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  color: #3a4050;
+  color: var(--text-secondary);
   font-size: 14px;
+  transition: all var(--transition-fast);
 }
+
 .session-item:hover {
-  background: #f2f4fb;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
+
 .session-item.active {
-  background: linear-gradient(135deg, #eef1ff, #f3efff);
-  color: #4f6ef7;
+  background: var(--brand-light);
+  color: var(--brand);
   font-weight: 500;
 }
+
 .session-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .more {
   opacity: 0;
+  transition: opacity var(--transition-fast);
 }
+
 .session-item:hover .more {
   opacity: 1;
 }
+
+/* 聊天主区域 */
 .chat-main {
   flex: 1;
-  background: #fff;
-  border-radius: 14px;
+  background: var(--bg-primary);
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
+
 .message-area {
   flex: 1;
   overflow: auto;
   padding: 24px;
 }
+
 .empty {
   height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #b3bac7;
+  color: var(--text-tertiary);
 }
+
 .empty-icon {
-  font-size: 48px;
-}
-.msg {
-  display: flex;
+  font-size: 64px;
   margin-bottom: 16px;
 }
+
+.empty h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.empty p {
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+.shortcuts {
+  display: flex;
+  gap: 24px;
+}
+
+.shortcut-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.shortcut-item kbd {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 消息样式 */
+.msg {
+  display: flex;
+  margin-bottom: 20px;
+  animation: slideUp var(--transition-slow);
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .msg.user {
   justify-content: flex-end;
 }
+
+.bubble-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
 .bubble {
-  max-width: 72%;
-  padding: 12px 16px;
-  border-radius: 14px;
+  max-width: 70%;
+  padding: 14px 18px;
+  border-radius: var(--radius-lg);
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.6;
+  line-height: 1.7;
   font-size: 14px;
 }
+
+.msg.user .bubble {
+  background: var(--brand-gradient);
+  color: #fff;
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.msg.assistant .bubble {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.msg-time {
+  font-size: 12px;
+  color: var(--text-placeholder);
+  margin-top: 6px;
+  padding: 0 4px;
+}
+
 .assistant-block {
-  max-width: 72%;
+  max-width: 70%;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
 }
+
 .assistant-block .bubble {
   max-width: 100%;
 }
-.msg-source {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #9aa3b2;
+
+.msg-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
 }
+
+.msg-source {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.msg-source .el-icon {
+  font-size: 14px;
+}
+
 .seg-text {
   white-space: pre-wrap;
 }
+
 .cite-link {
-  color: #4f6ef7;
+  color: var(--brand);
   font-weight: 600;
-  text-decoration: underline;
+  text-decoration: none;
   cursor: pointer;
-  margin: 0 1px;
+  margin: 0 2px;
+  padding: 1px 4px;
+  background: var(--brand-light);
+  border-radius: 4px;
+  transition: all var(--transition-fast);
 }
+
 .cite-link:hover {
-  color: #3350e0;
-}
-.msg.user .bubble {
-  background: linear-gradient(135deg, #4f6ef7, #7b5cf0);
+  background: var(--brand);
   color: #fff;
-  border-bottom-right-radius: 4px;
 }
-.msg.assistant .bubble {
-  background: #f2f4fb;
-  color: #1f2329;
-  border-bottom-left-radius: 4px;
+
+/* 打字动画 */
+.typing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+
 .cursor {
   display: inline-block;
   width: 8px;
   height: 16px;
-  background: #4f6ef7;
+  background: var(--brand);
   animation: blink 0.8s infinite;
-  vertical-align: middle;
+  border-radius: 2px;
 }
+
+.typing-text {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
+
+/* 输入区域 */
 .input-area {
-  border-top: 1px solid #eef0f4;
-  padding: 14px 18px;
+  border-top: 1px solid var(--border-lighter);
+  padding: 16px 20px;
+  background: var(--bg-primary);
 }
+
+.input-wrapper {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.input-wrapper :deep(.el-textarea__inner) {
+  background: transparent;
+  border: none;
+  box-shadow: none !important;
+  resize: none;
+}
+
 .input-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 10px;
+  margin-top: 12px;
 }
+
+.input-hints {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 .hint {
-  color: #9aa3b2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
+
+.shortcut-hint {
+  font-size: 12px;
+  color: var(--text-placeholder);
+}
+
+.shortcut-hint kbd {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.send-btn {
+  height: 40px;
+  padding: 0 24px;
+  font-size: 14px;
+}
+
+/* 参数面板 */
 .param-panel {
-  width: 260px;
-  background: #fff;
-  border-radius: 14px;
-  padding: 18px;
+  width: 280px;
+  background: var(--bg-primary);
+  border-radius: var(--radius-lg);
+  padding: 20px;
   overflow: auto;
+  box-shadow: var(--shadow-sm);
 }
+
 .param-title {
-  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
   font-weight: 600;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  color: var(--text-primary);
 }
+
 .param-block {
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
+
 .param-block label {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
-  color: #5a6272;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
+.param-block label .el-icon {
+  font-size: 16px;
+}
+
+.slider-marks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-placeholder);
+  margin-top: 4px;
+}
+
+.param-tips {
+  margin-top: 16px;
+}
+
+.param-tips h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.param-tips ul {
+  list-style: none;
+  padding: 0;
+}
+
+.param-tips li {
+  font-size: 12px;
+  color: var(--text-secondary);
   margin-bottom: 8px;
+  padding-left: 16px;
+  position: relative;
+}
+
+.param-tips li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--brand);
+}
+
+.cite-example {
+  color: var(--brand);
+  font-weight: 600;
+  background: var(--brand-light);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+/* 响应式 */
+@media (max-width: 1024px) {
+  .chat-page {
+    flex-direction: column;
+    height: auto;
+  }
+  
+  .session-panel {
+    width: 100%;
+    height: 200px;
+  }
+  
+  .param-panel {
+    width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-page {
+    gap: 12px;
+  }
+  
+  .session-panel {
+    height: 160px;
+    padding: 12px;
+  }
+  
+  .chat-main {
+    height: calc(100vh - 400px);
+  }
+  
+  .bubble {
+    max-width: 85%;
+  }
+  
+  .input-actions {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .input-hints {
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .send-btn {
+    width: 100%;
+  }
 }
 </style>

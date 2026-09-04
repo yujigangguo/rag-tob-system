@@ -105,3 +105,78 @@ def delete_message(
     """
     chat_service.delete_message(db, user.id, message_id)
     return {"message": "删除成功"}
+
+
+@router.get("/sessions/{session_id}/export", summary="导出对话")
+def export_session(
+    session_id: int,
+    format: str = "markdown",
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """导出对话记录。
+    
+    支持格式:
+    - markdown: 导出为 Markdown 文件
+    - json: 导出为 JSON 文件
+    
+    权限要求：登录用户
+    """
+    from fastapi.responses import Response
+    
+    # 获取会话信息
+    session = chat_service._get_session(db, user.id, session_id)
+    messages = chat_service.list_messages(db, user.id, session_id)
+    
+    if format == "json":
+        # JSON 格式导出
+        export_data = {
+            "session": {
+                "id": session.id,
+                "name": session.name,
+                "created_at": str(session.created_at) if hasattr(session, 'created_at') else None,
+            },
+            "messages": [
+                {
+                    "id": msg.id,
+                    "role": msg.role,
+                    "content": msg.content,
+                    "created_at": str(msg.created_at) if hasattr(msg, 'created_at') else None,
+                }
+                for msg in messages
+            ]
+        }
+        content = json.dumps(export_data, ensure_ascii=False, indent=2)
+        media_type = "application/json"
+        filename = f"对话_{session.name}_{session_id}.json"
+    else:
+        # Markdown 格式导出
+        lines = [
+            f"# {session.name}",
+            "",
+            f"导出时间: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "---",
+            "",
+        ]
+        
+        for msg in messages:
+            role_name = "👤 用户" if msg.role == "user" else "🤖 助手"
+            lines.append(f"## {role_name}")
+            lines.append("")
+            lines.append(msg.content)
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+        
+        content = "\n".join(lines)
+        media_type = "text/markdown; charset=utf-8"
+        filename = f"对话_{session.name}_{session_id}.md"
+    
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )

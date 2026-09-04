@@ -63,6 +63,35 @@ def delete_document(document_id: int, user: User = Depends(require_admin),
     return {"message": "删除成功"}
 
 
+@documents_router.post("/batch-delete", summary="批量删除文档(仅管理员)")
+def batch_delete_documents(
+    kb_id: int,
+    document_ids: list[int],
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """批量删除文档。
+    
+    权限要求：管理员（需有该知识库的管理权限）
+    """
+    success_count = 0
+    failed_ids = []
+    
+    for doc_id in document_ids:
+        try:
+            document_service.delete_document(db, user, doc_id)
+            success_count += 1
+        except Exception as e:
+            failed_ids.append({"id": doc_id, "error": str(e)})
+    
+    return {
+        "message": f"成功删除 {success_count} 个文档",
+        "success_count": success_count,
+        "failed_count": len(failed_ids),
+        "failed_ids": failed_ids,
+    }
+
+
 @documents_router.get("/{document_id}/chunks", response_model=list[ChunkOut], summary="文档块列表")
 def list_chunks(document_id: int, user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
@@ -101,3 +130,78 @@ def delete_chunk(chunk_id: int, user: User = Depends(require_admin),
                  db: Session = Depends(get_db)):
     document_service.delete_chunk(db, user, chunk_id)
     return {"message": "删除成功"}
+
+
+@documents_router.get("/{document_id}/preview", summary="文档预览")
+def preview_document(
+    document_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """预览文档内容（支持 PDF、Word、TXT 等格式）。
+    
+    返回文档的文本内容或文件流。
+    """
+    from fastapi.responses import FileResponse, Response
+    from pathlib import Path
+    
+    doc = db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    
+    # 校验权限
+    from app.services.kb_service import get_kb
+    get_kb(db, user, doc.kb_id)
+    
+    file_path = Path(doc.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    
+    # 根据文件类型返回不同响应
+    file_type = doc.file_type.lower()
+    
+    if file_type == 'pdf':
+        # PDF 直接返回文件流
+        return FileResponse(
+            path=str(file_path),
+            media_type='application/pdf',
+            filename=doc.filename,
+        )
+    elif file_type in ['txt', 'md', 'json', 'csv']:
+        # 文本文件返回内容
+        try:
+            content = file_path.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            content = file_path.read_text(encoding='gbk', errors='ignore')
+        return Response(
+            content=content,
+            media_type='text/plain; charset=utf-8',
+        )
+    elif file_type in ['docx', 'doc']:
+        # Word 文档解析为文本
+        try:
+            from app.rag.parsers import parse_file
+            text = parse_file(str(file_path), file_type)
+            return Response(
+                content=text,
+                media_type='text/plain; charset=utf-8',
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"文档解析失败: {str(e)}")
+    elif file_type in ['pptx', 'ppt']:
+        # PPT 解析为文本
+        try:
+            from app.rag.parsers import parse_file
+            text = parse_file(str(file_path), file_type)
+            return Response(
+                content=text,
+                media_type='text/plain; charset=utf-8',
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"文档解析失败: {str(e)}")
+    else:
+        # 其他类型返回文件下载
+        return FileResponse(
+            path=str(file_path),
+            filename=doc.filename,
+        )

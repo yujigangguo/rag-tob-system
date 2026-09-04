@@ -8,6 +8,7 @@ import App from './App.vue'
 import router from './router'
 import { getMe } from './api/auth'
 import { useAuthStore } from './stores/auth'
+import animateDirectives from './directives/animate'
 import './styles/index.css'
 
 const app = createApp(App)
@@ -15,6 +16,7 @@ const app = createApp(App)
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus)
+app.use(animateDirectives)
 
 // 注册所有图标
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {

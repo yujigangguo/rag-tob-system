@@ -87,3 +87,36 @@ export async function streamChat(
   }
   return full
 }
+
+// 导出对话
+export async function exportSession(sessionId: number, format: 'markdown' | 'json' = 'markdown'): Promise<void> {
+  const token = localStorage.getItem('token')
+  const resp = await fetch(`/api/chat/sessions/${sessionId}/export?format=${format}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  if (!resp.ok) {
+    throw new Error(`导出失败: ${resp.status}`)
+  }
+
+  // 获取文件名
+  const contentDisposition = resp.headers.get('Content-Disposition')
+  let filename = `对话_${sessionId}.${format === 'json' ? 'json' : 'md'}`
+  if (contentDisposition) {
+    const match = contentDisposition.match(/filename="?(.+?)"?$/)
+    if (match) filename = match[1]
+  }
+
+  // 下载文件
+  const blob = await resp.blob()
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(url)
+}

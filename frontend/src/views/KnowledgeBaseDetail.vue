@@ -16,7 +16,27 @@
     <div class="content">
       <!-- 文档列表 -->
       <div class="doc-list">
-        <div class="panel-title">文档列表({{ docs.length }})</div>
+        <div class="panel-title">
+          <span>文档列表({{ docs.length }})</span>
+          <div v-if="isAdmin && docs.length > 0" class="batch-actions">
+            <el-checkbox 
+              v-model="selectAll" 
+              :indeterminate="isIndeterminate"
+              @change="handleSelectAll"
+            >
+              全选
+            </el-checkbox>
+            <el-button 
+              v-if="selectedDocs.length > 0" 
+              text 
+              size="small" 
+              type="danger" 
+              @click="batchDelete"
+            >
+              删除({{ selectedDocs.length }})
+            </el-button>
+          </div>
+        </div>
         <el-empty v-if="docs.length === 0" description="暂无文档,点击右上角上传" />
         <div
           v-for="doc in docs"
@@ -25,11 +45,19 @@
           :class="{ active: doc.id === currentDocId }"
           @click="openDoc(doc)"
         >
+          <el-checkbox 
+            v-if="isAdmin" 
+            v-model="doc._selected" 
+            class="doc-checkbox"
+            @click.stop
+            @change="updateSelectAll"
+          />
           <div class="doc-name">📄 {{ doc.filename }}</div>
           <div class="doc-meta">
             <el-tag size="small" :type="statusType(doc.status)">{{ statusText(doc.status) }}</el-tag>
             <span>块 {{ doc.chunk_count }}</span>
             <el-button text size="small" type="info" @click.stop="openVersions(doc)">v{{ doc.version }}</el-button>
+            <el-button text size="small" type="primary" @click.stop="previewDoc(doc)">预览</el-button>
           </div>
           <el-icon v-if="isAdmin" class="doc-del" @click.stop="removeDoc(doc)"><Delete /></el-icon>
         </div>
@@ -135,6 +163,16 @@
           @click="rollbackOnce">回滚到上一版本</el-button>
       </template>
     </el-dialog>
+
+    <!-- 文档预览弹窗 -->
+    <el-dialog v-model="previewDialog" :title="previewTitle" width="80%" top="5vh">
+      <div class="preview-content">
+        <pre>{{ previewContent }}</pre>
+      </div>
+      <template #footer>
+        <el-button @click="previewDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -145,6 +183,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Upload, UploadFilled, Delete } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import {
+  batchDeleteDocuments,
   deleteChunk,
   deleteDocument,
   getDocumentProgress,
@@ -188,6 +227,16 @@ const versionDialog = ref(false)
 const versions = ref<DocumentVersion[]>([])
 const viewingVersion = ref<number | null>(null)
 const rollingBack = ref(false)
+
+// 文档预览
+const previewDialog = ref(false)
+const previewTitle = ref('')
+const previewContent = ref('')
+
+// 批量删除
+const selectAll = ref(false)
+const isIndeterminate = ref(false)
+const selectedDocs = ref<DocumentItem[]>([])
 
 onMounted(async () => {
   const kbs = await listKnowledgeBases()
@@ -338,6 +387,53 @@ async function removeDoc(doc: DocumentItem) {
   await loadDocs()
 }
 
+async function previewDoc(doc: DocumentItem) {
+  const token = localStorage.getItem('token')
+  const url = `/api/knowledge-bases/${kbId}/documents/${doc.id}/preview`
+  
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+    
+    if (!resp.ok) {
+      throw new Error(`预览失败: ${resp.status}`)
+    }
+    
+    const contentType = resp.headers.get('Content-Type') || ''
+    
+    if (contentType.includes('application/pdf')) {
+      // PDF 在新窗口打开
+      const blob = await resp.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      window.open(blobUrl, '_blank')
+      // 延迟释放 URL
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000)
+    } else if (contentType.includes('text/plain')) {
+      // 文本文件在弹窗中显示
+      const text = await resp.text()
+      previewContent.value = text
+      previewTitle.value = doc.filename
+      previewDialog.value = true
+    } else {
+      // 其他文件下载
+      const blob = await resp.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = doc.filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(blobUrl)
+    }
+  } catch (error: any) {
+    ElMessage.error(error.message || '预览失败')
+  }
+}
+
 function editChunk(chunk: ChunkItem) {
   editingChunk.value = chunk
   editContent.value = chunk.content
@@ -366,6 +462,57 @@ async function removeChunk(chunk: ChunkItem) {
   if (currentDoc.value) {
     chunks.value = await listChunks(kbId, currentDoc.value.id)
   }
+}
+
+// 批量选择相关
+function handleSelectAll(val: boolean) {
+  docs.value.forEach((doc) => {
+    ;(doc as any)._selected = val
+  })
+  isIndeterminate.value = false
+  updateSelectedDocs()
+}
+
+function updateSelectAll() {
+  updateSelectedDocs()
+  const selectedCount = selectedDocs.value.length
+  const totalCount = docs.value.length
+  selectAll.value = selectedCount === totalCount
+  isIndeterminate.value = selectedCount > 0 && selectedCount < totalCount
+}
+
+function updateSelectedDocs() {
+  selectedDocs.value = docs.value.filter((doc) => (doc as any)._selected)
+}
+
+async function batchDelete() {
+  if (selectedDocs.value.length === 0) {
+    ElMessage.warning('请先选择要删除的文档')
+    return
+  }
+  
+  await ElMessageBox.confirm(
+    `确定删除选中的 ${selectedDocs.value.length} 个文档吗?此操作不可恢复。`,
+    '批量删除',
+    { type: 'warning' }
+  )
+  
+  const ids = selectedDocs.value.map((d) => d.id)
+  const result = await batchDeleteDocuments(kbId, ids)
+  
+  if (result.failed_count === 0) {
+    ElMessage.success(`成功删除 ${result.success_count} 个文档`)
+  } else {
+    ElMessage.warning(`成功 ${result.success_count} 个,失败 ${result.failed_count} 个`)
+  }
+  
+  // 清空选择
+  selectAll.value = false
+  isIndeterminate.value = false
+  selectedDocs.value = []
+  
+  // 重新加载列表
+  await loadDocs()
 }
 </script>
 
@@ -411,10 +558,27 @@ async function removeChunk(chunk: ChunkItem) {
   font-weight: 600;
   margin-bottom: 12px;
   color: #3a4050;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
+
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-checkbox {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 .doc-item {
   position: relative;
-  padding: 12px;
+  padding: 12px 12px 12px 32px;
   border-radius: 10px;
   cursor: pointer;
   margin-bottom: 8px;
@@ -487,5 +651,24 @@ async function removeChunk(chunk: ChunkItem) {
   font-size: 13px;
   color: #6b7280;
   text-align: center;
+}
+
+/* 文档预览 */
+.preview-content {
+  max-height: 70vh;
+  overflow: auto;
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.preview-content pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+  color: #374151;
 }
 </style>

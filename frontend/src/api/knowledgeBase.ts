@@ -51,6 +51,15 @@ export function deleteDocument(kbId: number, documentId: number) {
   return http.delete(`/knowledge-bases/${kbId}/documents/${documentId}`)
 }
 
+export function batchDeleteDocuments(kbId: number, documentIds: number[]): Promise<{
+  message: string
+  success_count: number
+  failed_count: number
+  failed_ids: { id: number; error: string }[]
+}> {
+  return http.post(`/knowledge-bases/${kbId}/documents/batch-delete`, documentIds).then((r) => r.data)
+}
+
 export interface ParseProgress {
   progress: number
   status: 'pending' | 'parsing' | 'completed' | 'failed'

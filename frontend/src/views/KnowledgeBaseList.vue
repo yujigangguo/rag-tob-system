@@ -5,13 +5,23 @@
         <h2>知识库管理</h2>
         <p class="sub">创建多个知识库,每个知识库可上传多个文档</p>
       </div>
-      <el-button v-if="isAdmin" type="primary" class="gradient-btn" :icon="Plus" @click="openCreate">创建知识库</el-button>
+      <div class="toolbar-right">
+        <el-input
+          v-model="searchQuery"
+          placeholder="搜索知识库..."
+          clearable
+          :prefix-icon="Search"
+          class="search-input"
+        />
+        <el-button v-if="isAdmin" type="primary" class="gradient-btn" :icon="Plus" @click="openCreate">创建知识库</el-button>
+      </div>
     </div>
 
-    <el-empty v-if="kbs.length === 0" description="还没有知识库,请联系管理员创建" />
+    <el-empty v-if="filteredKbs.length === 0 && !searchQuery" description="还没有知识库,请联系管理员创建" />
+    <el-empty v-else-if="filteredKbs.length === 0 && searchQuery" description="没有找到匹配的知识库" />
 
     <el-row :gutter="16">
-      <el-col v-for="kb in kbs" :key="kb.id" :xs="24" :sm="12" :md="8">
+      <el-col v-for="kb in filteredKbs" :key="kb.id" :xs="24" :sm="12" :md="8">
         <el-card class="kb-card hover-lift" shadow="hover" @click="goDetail(kb.id)">
           <div class="kb-head">
             <div class="kb-icon">📚</div>
@@ -84,7 +94,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Search } from '@element-plus/icons-vue'
 import { createKnowledgeBase, deleteKnowledgeBase, listDepartments, listKnowledgeBases } from '@/api/knowledgeBase'
 import { useAuthStore } from '@/stores/auth'
 import type { Department, KnowledgeBase } from '@/types'
@@ -95,8 +105,23 @@ const kbs = ref<KnowledgeBase[]>([])
 const departments = ref<Department[]>([])
 const dialog = ref(false)
 const creating = ref(false)
+const searchQuery = ref('')
 
 const isAdmin = computed(() => authStore.isAdmin)
+
+// 搜索过滤后的知识库列表
+const filteredKbs = computed(() => {
+  if (!searchQuery.value.trim()) {
+    return kbs.value
+  }
+  const query = searchQuery.value.toLowerCase().trim()
+  return kbs.value.filter((kb) => {
+    return (
+      kb.name.toLowerCase().includes(query) ||
+      (kb.description && kb.description.toLowerCase().includes(query))
+    )
+  })
+})
 // super_admin 可选全部部门;dept_admin 只能选本部门
 const deptOptions = computed(() => {
   if (authStore.isSuperAdmin) return departments.value
@@ -191,6 +216,14 @@ function remove(kb: KnowledgeBase) {
   color: #9aa3b2;
   font-size: 13px;
   margin-top: 4px;
+}
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.search-input {
+  width: 250px;
 }
 .kb-card {
   border-radius: 14px;

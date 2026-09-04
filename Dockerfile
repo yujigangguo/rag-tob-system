@@ -15,7 +15,7 @@ extra-index-url =\n\
     https://mirrors.cloud.tencent.com/pypi/simple/\n\
     https://pypi.tuna.tsinghua.edu.cn/simple/\n\
 trusted-host =\n\
-    mirrors.aliyuncs.com\n\
+    mirrors.aliyuncs.com\
     mirrors.cloud.tencent.com\n\
     pypi.tuna.tsinghua.edu.cn' > /etc/pip.conf && \
     cat /etc/pip.conf
